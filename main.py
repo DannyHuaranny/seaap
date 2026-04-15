@@ -14,7 +14,7 @@ USUARIO = os.environ.get("SEAAP_USER")
 PASSWORD = os.environ.get("SEAAP_PASS")
 
 # =========================================================
-# GOOGLE SHEETS (SECRET)
+# GOOGLE SHEETS (DESDE SECRET)
 # =========================================================
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -26,17 +26,37 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
 spreadsheet = client.open("DATA COMPROMISO 1 CONSOLIDADO ABRIL ")
-sheet = spreadsheet.worksheet("RURAL")
 
-print("🟢 Conectado a Google Sheets")
+print("📄 Detectando hojas...")
+
+HOJAS_ACTORES = [
+    h.title for h in spreadsheet.worksheets()
+    if h.title not in [
+        "telefono","Sheet1","RURAL","FIRMAS",
+        "HEMOGLOBINA","VACUNAS","SEGUIMIENTO 1",
+        "SEGUIMIENTO GESTORA","CONSOLIDADO"
+    ]
+]
+
+print("🟢 Hojas:", HOJAS_ACTORES)
 
 # =========================================================
 # CARGAR DNIs
 # =========================================================
-dni_columna = sheet.col_values(4)
-dni_fila = {str(dni): i+1 for i, dni in enumerate(dni_columna) if dni}
+sheets = {}
+dni_filas = {}
 
-print(f"🟢 {len(dni_fila)} DNIs cargados")
+for nombre in HOJAS_ACTORES:
+    sh = spreadsheet.worksheet(nombre)
+    sheets[nombre] = sh
+
+    dni_col = sh.col_values(3)
+
+    dni_filas[nombre] = {
+        str(dni): i+1 for i, dni in enumerate(dni_col) if dni
+    }
+
+    print(f"   🟢 {nombre}: {len(dni_filas[nombre])}")
 
 # =========================================================
 # ACTORES VALIDOS
@@ -45,8 +65,11 @@ hoja_telefono = spreadsheet.worksheet("telefono")
 dni_actores_raw = hoja_telefono.col_values(1)
 
 ACTORES_VALIDOS_DNI = {
-    str(v).strip() for v in dni_actores_raw[1:] if str(v).strip().isdigit()
+    str(v).strip() for v in dni_actores_raw[1:]
+    if str(v).strip().isdigit()
 }
+
+print(f"🟢 {len(ACTORES_VALIDOS_DNI)} actores válidos")
 
 # =========================================================
 # MEMORIA
@@ -64,7 +87,7 @@ def extraer_dni_actor(texto):
 
 
 def login_seaap(page):
-    print("🔐 Iniciando sesión...")
+    print("🔐 Login...")
 
     page.wait_for_selector("input[name='login']", timeout=60000)
     page.fill("input[name='login']", USUARIO)
@@ -73,9 +96,9 @@ def login_seaap(page):
     page.wait_for_timeout(5000)
 
     if "login" in page.url.lower():
-        raise Exception("❌ Error de login")
+        raise Exception("❌ Error login")
 
-    print("🟢 Login exitoso")
+    print("🟢 Login OK")
 
 
 def obtener_registros_nino(page, nino_id):
@@ -92,13 +115,17 @@ def obtener_registros_nino(page, nino_id):
         "id": 401
     }
 
-    response = page.evaluate("""async (p)=>{
-        const r = await fetch('/web/dataset/call_kw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-        return await r.json();
+    r = page.evaluate("""async (p)=>{
+        const res = await fetch('/web/dataset/call_kw',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(p)
+        });
+        return await res.json();
     }""", payload)
 
-    registro_ids = response.get("result", [{}])[0].get("registro_ids", [])
-    if not registro_ids:
+    ids = r.get("result", [{}])[0].get("registro_ids", [])
+    if not ids:
         return []
 
     payload2 = {
@@ -107,29 +134,37 @@ def obtener_registros_nino(page, nino_id):
         "params": {
             "model": "actividades.registro",
             "method": "read",
-            "args": [registro_ids],
+            "args": [ids],
             "kwargs": {
-                "fields": [
-                    "id","ficha","fecha_visita_1",
-                    "observaciones","tipo_motivo",
-                    "district_motivo","motivo_ids"
-                ]
+                "fields": ["id","ficha","fecha_visita_1"]
             }
         },
         "id": 402
     }
 
-    response2 = page.evaluate("""async (p)=>{
-        const r = await fetch('/web/dataset/call_kw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-        return await r.json();
+    r2 = page.evaluate("""async (p)=>{
+        const res = await fetch('/web/dataset/call_kw',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(p)
+        });
+        return await res.json();
     }""", payload2)
 
-    return response2.get("result", [])
+    return r2.get("result", [])
 
 
 def registrar_visitas_sheet(dni, registros):
 
-    fila = dni_fila.get(str(dni))
+    fila = None
+    hoja_destino = None
+
+    for nombre, dic in dni_filas.items():
+        if str(dni) in dic:
+            fila = dic[str(dni)]
+            hoja_destino = nombre
+            break
+
     if not fila:
         return
 
@@ -140,7 +175,7 @@ def registrar_visitas_sheet(dni, registros):
         key=lambda x: x.get("fecha_visita_1") or ""
     )
 
-    columnas = ["AF", "AI", "AL"]
+    columnas = ["Z","AC","AF"]
 
     colores = {
         1: {"red":0.75,"green":0.95,"blue":0.75},
@@ -157,41 +192,16 @@ def registrar_visitas_sheet(dni, registros):
         if not fecha:
             continue
 
-        # 🔹 construir observación
-        partes = []
-
-        if reg.get("observaciones"):
-            partes.append(str(reg["observaciones"]))
-
-        if reg.get("tipo_motivo") and isinstance(reg["tipo_motivo"], list):
-            partes.append(reg["tipo_motivo"][1])
-
-        if reg.get("motivo_ids"):
-            for m in reg["motivo_ids"]:
-                if isinstance(m, list):
-                    partes.append(m[1])
-
-        if reg.get("district_motivo") and isinstance(reg["district_motivo"], list):
-            partes.append(reg["district_motivo"][1])
-
-        texto_final = " - ".join(dict.fromkeys(partes)).strip()
-
         col = columnas[i]
 
         visitas_para_sheet.append({
-            "range": f"RURAL!{col}{fila}",
+            "range": f"{hoja_destino}!{col}{fila}",
             "values": [[fecha]]
         })
 
-        # observaciones solo fichas 4 y 5
-        if ficha in [4,5] and texto_final:
-            visitas_para_sheet.append({
-                "range": f"RURAL!AO{fila}",
-                "values": [[texto_final]]
-            })
-
         if ficha in colores:
             formatos_para_sheet.append({
+                "hoja": hoja_destino,
                 "celda": f"{col}{fila}",
                 "color": colores[ficha]
             })
@@ -203,7 +213,7 @@ def enviar_visitas():
         print("📭 Sin datos")
         return
 
-    print(f"📤 Enviando {len(visitas_para_sheet)} registros")
+    print(f"📤 Enviando {len(visitas_para_sheet)}")
 
     spreadsheet.values_batch_update({
         "valueInputOption": "USER_ENTERED",
@@ -217,11 +227,12 @@ def enviar_visitas():
         for f in formatos_para_sheet:
 
             row, col = gspread.utils.a1_to_rowcol(f["celda"])
+            sheet_id = sheets[f["hoja"]].id
 
             requests.append({
                 "repeatCell": {
                     "range": {
-                        "sheetId": sheet.id,
+                        "sheetId": sheet_id,
                         "startRowIndex": row-1,
                         "endRowIndex": row,
                         "startColumnIndex": col-1,
@@ -242,7 +253,7 @@ def enviar_visitas():
 
 
 # =========================================================
-# EJECUCION
+# MAIN
 # =========================================================
 def ejecutar():
 
@@ -254,24 +265,20 @@ def ejecutar():
         browser = p.chromium.launch(headless=True)
 
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120",
+            user_agent="Mozilla/5.0 Chrome/120",
             locale="es-PE"
         )
 
         page = context.new_page()
 
         page.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        })
+        Object.defineProperty(navigator,'webdriver',{get:()=>undefined})
         """)
 
         print("🌐 Abriendo SEAAP...")
         page.goto(URL, timeout=60000)
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(5000)
-
-        print("🌍 URL:", page.url)
 
         login_seaap(page)
 
@@ -283,23 +290,26 @@ def ejecutar():
             "params": {
                 "model": "actividades.padron.nominal",
                 "method": "read_group",
-                "args": [
-                    [["parent_id","=",103]],
-                    ["actor_id"],
-                    ["actor_id"]
-                ]
+                "args": [[["parent_id","=",103]],["actor_id"],["actor_id"]]
             },
             "id": 1
         }
 
-        response = page.evaluate("""async (p)=>{
-            const r = await fetch('/web/dataset/call_kw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+        res = page.evaluate("""async (p)=>{
+            const r = await fetch('/web/dataset/call_kw',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify(p)
+            });
             return await r.json();
         }""", payload)
 
-        data = response.get("result", [])
+        data = res.get("result", [])
+
+        actores_procesados = set()
 
         for row in data:
+
             if not row.get("actor_id"):
                 continue
 
@@ -311,20 +321,18 @@ def ejecutar():
             if dni_actor not in ACTORES_VALIDOS_DNI:
                 continue
 
-            print(f"👤 {actor_nombre}")
+            if actor_id in actores_procesados:
+                continue
 
-            # 🔹 aquí deberías seguir tu lógica de niños (si quieres lo optimizamos luego)
+            actores_procesados.add(actor_id)
+
+            print(f"\n👤 {actor_nombre}")
+
+            # 👉 AQUÍ puedes volver a meter tu lógica de niños si quieres expandir
 
         enviar_visitas()
         print("✅ FIN")
 
 
-# =========================================================
-# MAIN
-# =========================================================
 if __name__ == "__main__":
-    try:
-        ejecutar()
-    except Exception as e:
-        print("❌ ERROR:", str(e))
-        raise
+    ejecutar()
