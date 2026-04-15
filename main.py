@@ -6,7 +6,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # =========================================================
-# CONFIG
+# 🔹 CONFIG
 # =========================================================
 URL = "https://seaap.minsa.gob.pe/web"
 
@@ -14,7 +14,7 @@ USUARIO = os.environ.get("SEAAP_USER")
 PASSWORD = os.environ.get("SEAAP_PASS")
 
 # =========================================================
-# GOOGLE SHEETS
+# 🔹 GOOGLE SHEETS
 # =========================================================
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -32,16 +32,15 @@ print("📄 Detectando hojas...")
 HOJAS_ACTORES = [
     h.title for h in spreadsheet.worksheets()
     if h.title not in [
-        "telefono","Sheet1","RURAL","FIRMAS",
-        "HEMOGLOBINA","VACUNAS","SEGUIMIENTO 1",
-        "SEGUIMIENTO GESTORA","CONSOLIDADO"
+        "telefono","Sheet1","RURAL","FIRMAS","HEMOGLOBINA",
+        "VACUNAS","SEGUIMIENTO 1","SEGUIMIENTO GESTORA","CONSOLIDADO"
     ]
 ]
 
 print("🟢 Hojas:", HOJAS_ACTORES)
 
 # =========================================================
-# CARGAR DNIs
+# 🔹 CARGAR DNIs
 # =========================================================
 sheets = {}
 dni_filas = {}
@@ -50,35 +49,34 @@ for nombre in HOJAS_ACTORES:
     sh = spreadsheet.worksheet(nombre)
     sheets[nombre] = sh
 
-    dni_col = sh.col_values(3)
+    dni_columna = sh.col_values(3)
 
     dni_filas[nombre] = {
-        str(dni): i+1 for i, dni in enumerate(dni_col) if dni
+        str(dni): i+1 for i, dni in enumerate(dni_columna) if dni
     }
 
     print(f"   🟢 {nombre}: {len(dni_filas[nombre])}")
 
 # =========================================================
-# ACTORES VALIDOS
+# 🔹 ACTORES VALIDOS
 # =========================================================
 hoja_telefono = spreadsheet.worksheet("telefono")
 dni_actores_raw = hoja_telefono.col_values(1)
 
 ACTORES_VALIDOS_DNI = {
-    str(v).strip() for v in dni_actores_raw[1:]
-    if str(v).strip().isdigit()
+    str(v).strip() for v in dni_actores_raw[1:] if str(v).strip().isdigit()
 }
 
 print(f"🟢 {len(ACTORES_VALIDOS_DNI)} actores válidos")
 
 # =========================================================
-# MEMORIA
+# 🔹 VARIABLES
 # =========================================================
 visitas_para_sheet = []
 formatos_para_sheet = []
 
 # =========================================================
-# FUNCIONES
+# 🔹 FUNCIONES
 # =========================================================
 
 def extraer_dni_actor(texto):
@@ -89,52 +87,24 @@ def extraer_dni_actor(texto):
 def login_seaap(page):
     print("🔐 Login...")
 
-    page.wait_for_selector("input[name='login']", timeout=60000)
+    try:
+        page.wait_for_selector("input[name='login']", timeout=30000)
+    except:
+        page.reload()
+        page.wait_for_selector("input[name='login']", timeout=30000)
+
     page.fill("input[name='login']", USUARIO)
     page.fill("input[name='password']", PASSWORD)
+
     page.click("button[type='submit']")
+
+    page.wait_for_load_state("networkidle")
     page.wait_for_timeout(5000)
 
     if "login" in page.url.lower():
         raise Exception("❌ Error login")
 
     print("🟢 Login OK")
-
-
-def obtener_ninos_actor(page, actor_id):
-
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "actividades.padron.nominal",
-            "method": "search_read",
-            "args": [[
-                "&",
-                ["actor_id", "=", actor_id],
-                ["parent_id", "=", 103],
-                ["year", ">", 2023],
-                ["estado_carga", "not in", ["borrador", "cargado"]]
-            ]],
-            "kwargs": {
-                "fields": ["id", "name", "documento_numero",
-                           "total_valid_intervenciones"],
-                "limit": 200
-            }
-        },
-        "id": 103
-    }
-
-    response = page.evaluate("""async (p)=>{
-        const r = await fetch('/web/dataset/call_kw',{
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify(p)
-        });
-        return await r.json();
-    }""", payload)
-
-    return response.get("result", [])
 
 
 def obtener_registros_nino(page, nino_id):
@@ -151,17 +121,17 @@ def obtener_registros_nino(page, nino_id):
         "id": 401
     }
 
-    r = page.evaluate("""async (p)=>{
-        const res = await fetch('/web/dataset/call_kw',{
+    response = page.evaluate("""async (p)=>{
+        const r = await fetch('/web/dataset/call_kw',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(p)
         });
-        return await res.json();
+        return await r.json();
     }""", payload)
 
-    ids = r.get("result", [{}])[0].get("registro_ids", [])
-    if not ids:
+    registro_ids = response.get("result", [{}])[0].get("registro_ids", [])
+    if not registro_ids:
         return []
 
     payload2 = {
@@ -170,24 +140,22 @@ def obtener_registros_nino(page, nino_id):
         "params": {
             "model": "actividades.registro",
             "method": "read",
-            "args": [ids],
-            "kwargs": {
-                "fields": ["id","ficha","fecha_visita_1"]
-            }
+            "args": [registro_ids],
+            "kwargs": {"fields": ["id","ficha","fecha_visita_1"]}
         },
         "id": 402
     }
 
-    r2 = page.evaluate("""async (p)=>{
-        const res = await fetch('/web/dataset/call_kw',{
+    response2 = page.evaluate("""async (p)=>{
+        const r = await fetch('/web/dataset/call_kw',{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify(p)
         });
-        return await res.json();
+        return await r.json();
     }""", payload2)
 
-    return r2.get("result", [])
+    return response2.get("result", [])
 
 
 def registrar_visitas_sheet(dni, registros):
@@ -195,16 +163,18 @@ def registrar_visitas_sheet(dni, registros):
     fila = None
     hoja_destino = None
 
-    for nombre, dic in dni_filas.items():
-        if str(dni) in dic:
-            fila = dic[str(dni)]
-            hoja_destino = nombre
+    for nombre_hoja, dic_dni in dni_filas.items():
+        if str(dni) in dic_dni:
+            fila = dic_dni[str(dni)]
+            hoja_destino = nombre_hoja
             break
 
     if not fila:
         return
 
-    registros_validos = [r for r in registros if r.get("ficha") in [1,2,4,5]]
+    registros_validos = [
+        r for r in registros if r.get("ficha") in [1,2,4,5]
+    ]
 
     registros_ordenados = sorted(
         registros_validos,
@@ -223,11 +193,10 @@ def registrar_visitas_sheet(dni, registros):
     for i, reg in enumerate(registros_ordenados[:3]):
 
         fecha = reg.get("fecha_visita_1")
-        ficha = int(reg.get("ficha", 0))
-
         if not fecha:
             continue
 
+        ficha = int(reg.get("ficha", 0))
         col = columnas[i]
 
         visitas_para_sheet.append({
@@ -257,11 +226,9 @@ def enviar_visitas():
     })
 
     if formatos_para_sheet:
-
         requests = []
 
         for f in formatos_para_sheet:
-
             row, col = gspread.utils.a1_to_rowcol(f["celda"])
             sheet_id = sheets[f["hoja"]].id
 
@@ -289,8 +256,9 @@ def enviar_visitas():
 
 
 # =========================================================
-# MAIN
+# 🔹 MAIN
 # =========================================================
+
 def ejecutar():
 
     visitas_para_sheet.clear()
@@ -298,18 +266,17 @@ def ejecutar():
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(headless=True)
-
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 Chrome/120",
-            locale="es-PE"
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
         )
 
+        context = browser.new_context(locale="es-PE")
         page = context.new_page()
-
-        page.add_init_script("""
-        Object.defineProperty(navigator,'webdriver',{get:()=>undefined})
-        """)
 
         print("🌐 Abriendo SEAAP...")
         page.goto(URL, timeout=60000)
@@ -318,20 +285,27 @@ def ejecutar():
 
         login_seaap(page)
 
-        print("📊 Extrayendo...")
-
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
             "params": {
                 "model": "actividades.padron.nominal",
                 "method": "read_group",
-                "args": [[["parent_id","=",103]],["actor_id"],["actor_id"]]
+                "args": [
+                    [
+                        "&",
+                        ["parent_id", "=", 103],
+                        ["year", ">", 2023],
+                        ["estado_carga", "not in", ["borrador", "cargado"]]
+                    ],
+                    ["actor_id"],
+                    ["actor_id"]
+                ]
             },
             "id": 1
         }
 
-        res = page.evaluate("""async (p)=>{
+        response = page.evaluate("""async (p)=>{
             const r = await fetch('/web/dataset/call_kw',{
                 method:'POST',
                 headers:{'Content-Type':'application/json'},
@@ -340,9 +314,9 @@ def ejecutar():
             return await r.json();
         }""", payload)
 
-        data = res.get("result", [])
+        data = response.get("result", [])
 
-        actores_procesados = set()
+        print(f"📦 TOTAL registros API: {len(data)}")
 
         for row in data:
 
@@ -357,35 +331,26 @@ def ejecutar():
             if dni_actor not in ACTORES_VALIDOS_DNI:
                 continue
 
-            if actor_id in actores_procesados:
-                continue
-
-            actores_procesados.add(actor_id)
-
-            print(f"\n👤 {actor_nombre}")
+            print(f"👤 {actor_nombre}")
 
             ninos = obtener_ninos_actor(page, actor_id)
-            print(f"   👶 {len(ninos)} niños")
 
             for nino in ninos:
-
-                nino_id = nino.get("id")
-                dni = nino.get("documento_numero")
-                nombre = nino.get("name")
-                visitas = nino.get("total_valid_intervenciones", 0)
-
-                if visitas == 0:
+                if nino.get("total_valid_intervenciones", 0) == 0:
                     continue
 
-                registros = obtener_registros_nino(page, nino_id)
+                registros = obtener_registros_nino(page, nino["id"])
 
                 if registros:
-                    print(f"   🧒 {nombre} | DNI {dni}")
-                    registrar_visitas_sheet(dni, registros)
+                    registrar_visitas_sheet(nino["documento_numero"], registros)
 
         enviar_visitas()
+
         print("✅ FIN")
 
 
+# =========================================================
+# 🔹 RUN
+# =========================================================
 if __name__ == "__main__":
     ejecutar()
