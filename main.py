@@ -1,8 +1,11 @@
 from playwright.sync_api import sync_playwright
 
-URL = "https://seaap.minsa.gob.pe/web"
+URL = "http://seaap.minsa.gob.pe/web/login"
 
-def test_seaap():
+USUARIO = "TU_USUARIO"
+PASSWORD = "TU_PASSWORD"
+
+def test_login_real():
 
     with sync_playwright() as p:
 
@@ -15,39 +18,29 @@ def test_seaap():
 
         page = context.new_page()
 
-        print("🌐 Abriendo SEAAP...")
+        print("🌐 Abriendo login directo...")
         page.goto(URL, timeout=60000)
 
+        page.wait_for_selector("input[name='login']")
+
+        # 🔐 LOGIN REAL
+        page.fill("input[name='login']", USUARIO)
+        page.fill("input[name='password']", PASSWORD)
+
+        # 🔥 importante: submit FORM (no solo click)
+        page.press("input[name='password']", "Enter")
+
+        # ⏳ esperar cambio de URL o carga
         page.wait_for_timeout(5000)
 
-        print("🌐 URL actual:", page.url)
+        print("🌐 URL después login:", page.url)
 
-        # 🔍 ver HTML
-        html = page.content()
-        print("📄 Tamaño HTML:", len(html))
+        # 🔥 VALIDAR SESIÓN
+        cookies = context.cookies()
+        print("🍪 Cookies:", cookies)
 
-        # 🔍 buscar inputs
-        inputs = page.query_selector_all("input")
-        print(f"🔎 Inputs encontrados: {len(inputs)}")
-
-        for i, inp in enumerate(inputs[:10]):
-            try:
-                name = inp.get_attribute("name")
-                print(f"   Input {i}: name={name}")
-            except:
-                pass
-
-        # 🔥 intentar detectar login
-        login_input = page.query_selector("input[name='login']")
-        password_input = page.query_selector("input[name='password']")
-
-        if login_input and password_input:
-            print("🟢 LOGIN DETECTADO CORRECTAMENTE")
-        else:
-            print("❌ NO SE DETECTA LOGIN")
-
-        # 🔥 probar llamada API simple
-        print("📡 Probando API...")
+        # 🔥 PROBAR API CON SESIÓN
+        print("📡 Probando API con sesión...")
 
         payload = {
             "jsonrpc": "2.0",
@@ -61,23 +54,19 @@ def test_seaap():
             "id": 1
         }
 
-        try:
-            response = page.evaluate("""async (p)=>{
-                const r = await fetch('/web/dataset/call_kw',{
-                    method:'POST',
-                    headers:{'Content-Type':'application/json'},
-                    body:JSON.stringify(p)
-                });
-                return await r.json();
-            }""", payload)
+        response = page.evaluate("""async (p)=>{
+            const r = await fetch('/web/dataset/call_kw',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify(p)
+            });
+            return await r.json();
+        }""", payload)
 
-            print("📡 Respuesta API:", response)
-
-        except Exception as e:
-            print("❌ Error API:", e)
+        print("📡 RESPUESTA:", response)
 
         browser.close()
 
 
 if __name__ == "__main__":
-    test_seaap()
+    test_login_real()
