@@ -5,7 +5,47 @@ URL = "http://seaap.minsa.gob.pe/web/login"
 USUARIO = "TU_USUARIO"
 PASSWORD = "TU_PASSWORD"
 
-def test_login_real():
+def login_real(page):
+
+    page.goto(URL, timeout=60000)
+
+    page.wait_for_selector("input[name='login']")
+
+    # 🔥 obtener csrf token
+    csrf = page.get_attribute("input[name='csrf_token']", "value")
+
+    print("🔑 CSRF:", csrf)
+
+    # 🔥 hacer POST real (como navegador)
+    response = page.evaluate("""async ({user, passw, csrf}) => {
+        const formData = new FormData();
+        formData.append('login', user);
+        formData.append('password', passw);
+        formData.append('csrf_token', csrf);
+
+        const r = await fetch('/web/login', {
+            method: 'POST',
+            body: formData
+        });
+
+        return r.url;
+    }""", {
+        "user": USUARIO,
+        "passw": PASSWORD,
+        "csrf": csrf
+    })
+
+    print("🌐 URL después POST:", response)
+
+    # 🔥 navegar manualmente al backend
+    page.goto("http://seaap.minsa.gob.pe/web", timeout=60000)
+
+    page.wait_for_timeout(5000)
+
+    print("🌐 URL final:", page.url)
+
+
+def test():
 
     with sync_playwright() as p:
 
@@ -18,30 +58,9 @@ def test_login_real():
 
         page = context.new_page()
 
-        print("🌐 Abriendo login directo...")
-        page.goto(URL, timeout=60000)
+        login_real(page)
 
-        page.wait_for_selector("input[name='login']")
-
-        # 🔐 LOGIN REAL
-        page.fill("input[name='login']", USUARIO)
-        page.fill("input[name='password']", PASSWORD)
-
-        # 🔥 importante: submit FORM (no solo click)
-        page.press("input[name='password']", "Enter")
-
-        # ⏳ esperar cambio de URL o carga
-        page.wait_for_timeout(5000)
-
-        print("🌐 URL después login:", page.url)
-
-        # 🔥 VALIDAR SESIÓN
-        cookies = context.cookies()
-        print("🍪 Cookies:", cookies)
-
-        # 🔥 PROBAR API CON SESIÓN
-        print("📡 Probando API con sesión...")
-
+        # 🔥 probar API
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -69,4 +88,4 @@ def test_login_real():
 
 
 if __name__ == "__main__":
-    test_login_real()
+    test()
