@@ -14,7 +14,7 @@ USUARIO = os.environ.get("SEAAP_USER")
 PASSWORD = os.environ.get("SEAAP_PASS")
 
 # =========================================================
-# GOOGLE SHEETS (DESDE SECRET)
+# GOOGLE SHEETS
 # =========================================================
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -99,6 +99,42 @@ def login_seaap(page):
         raise Exception("❌ Error login")
 
     print("🟢 Login OK")
+
+
+def obtener_ninos_actor(page, actor_id):
+
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "actividades.padron.nominal",
+            "method": "search_read",
+            "args": [[
+                "&",
+                ["actor_id", "=", actor_id],
+                ["parent_id", "=", 103],
+                ["year", ">", 2023],
+                ["estado_carga", "not in", ["borrador", "cargado"]]
+            ]],
+            "kwargs": {
+                "fields": ["id", "name", "documento_numero",
+                           "total_valid_intervenciones"],
+                "limit": 200
+            }
+        },
+        "id": 103
+    }
+
+    response = page.evaluate("""async (p)=>{
+        const r = await fetch('/web/dataset/call_kw',{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(p)
+        });
+        return await r.json();
+    }""", payload)
+
+    return response.get("result", [])
 
 
 def obtener_registros_nino(page, nino_id):
@@ -328,7 +364,24 @@ def ejecutar():
 
             print(f"\n👤 {actor_nombre}")
 
-            # 👉 AQUÍ puedes volver a meter tu lógica de niños si quieres expandir
+            ninos = obtener_ninos_actor(page, actor_id)
+            print(f"   👶 {len(ninos)} niños")
+
+            for nino in ninos:
+
+                nino_id = nino.get("id")
+                dni = nino.get("documento_numero")
+                nombre = nino.get("name")
+                visitas = nino.get("total_valid_intervenciones", 0)
+
+                if visitas == 0:
+                    continue
+
+                registros = obtener_registros_nino(page, nino_id)
+
+                if registros:
+                    print(f"   🧒 {nombre} | DNI {dni}")
+                    registrar_visitas_sheet(dni, registros)
 
         enviar_visitas()
         print("✅ FIN")
