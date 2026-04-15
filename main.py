@@ -49,14 +49,22 @@ def test():
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(headless=True)
-
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--disable-blink-features=AutomationControlled"]
+        )
+        
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-            locale="es-PE"
+            locale="es-PE",
+            viewport={"width": 1280, "height": 720}
         )
-
-        page = context.new_page()
+        
+        page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        })
+        """)
 
         login_real(page)
 
