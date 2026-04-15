@@ -37,7 +37,7 @@ HOJAS_ACTORES = [
 print("🟢 Hojas:", HOJAS_ACTORES)
 
 # =========================================================
-# 🔹 DNIs
+# 🔹 CARGAR DNIs
 # =========================================================
 sheets = {}
 dni_filas = {}
@@ -85,36 +85,54 @@ def login_seaap(page):
     print("🔐 Login...")
 
     page.goto(URL, timeout=60000)
-    page.wait_for_timeout(5000)
 
-    # múltiples selectores (SEAAP cambia)
-    selectors = [
-        "input[name='login']",
-        "input#login",
-        "input[type='text']"
-    ]
+    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_timeout(8000)
 
-    found = False
-    for sel in selectors:
-        try:
-            page.wait_for_selector(sel, timeout=8000)
-            user_input = sel
-            found = True
+    print("🌐 URL:", page.url)
+    print("📄 HTML size:", len(page.content()))
+
+    # 🔁 reintentos
+    for intento in range(5):
+        print(f"⏳ Intento {intento+1} buscando inputs...")
+
+        inputs = page.query_selector_all("input")
+
+        if len(inputs) > 0:
+            print(f"🟢 Inputs encontrados: {len(inputs)}")
             break
-        except:
-            pass
 
-    if not found:
-        raise Exception("❌ No aparece login")
+        page.wait_for_timeout(5000)
 
-    pass_input = "input[name='password'], input[type='password']"
+    else:
+        raise Exception("❌ No aparece login (bloqueo o cambio web)")
 
+    # 🔎 detectar campos
+    user_input = None
+    pass_input = None
+
+    for sel in ["input[name='login']", "input#login", "input[type='text']"]:
+        if page.query_selector(sel):
+            user_input = sel
+            break
+
+    for sel in ["input[name='password']", "input[type='password']"]:
+        if page.query_selector(sel):
+            pass_input = sel
+            break
+
+    if not user_input or not pass_input:
+        raise Exception("❌ No se encontraron inputs correctos")
+
+    # 🔐 login
     page.fill(user_input, USUARIO)
     page.fill(pass_input, PASSWORD)
 
     page.click("button[type='submit']")
 
-    page.wait_for_timeout(5000)
+    page.wait_for_timeout(6000)
+
+    print("🌐 URL después login:", page.url)
 
     if "login" in page.url.lower():
         raise Exception("❌ Login falló")
@@ -185,7 +203,6 @@ def registrar_visitas_sheet(dni, registros):
         return
 
     registros = [r for r in registros if r.get("ficha") in [1,2,4,5]]
-
     registros = sorted(registros, key=lambda x: x.get("fecha_visita_1") or "")
 
     columnas = ["Z","AC","AF"]
@@ -278,7 +295,6 @@ def ejecutar():
         print("🌐 Abriendo SEAAP...")
         login_seaap(page)
 
-        # 🔥 SIN FILTRO (clave)
         payload = {
             "jsonrpc":"2.0",
             "method":"call",
@@ -305,7 +321,7 @@ def ejecutar():
 
         data = res.get("result",[])
 
-        print(f"📊 Actores encontrados: {len(data)}")
+        print(f"📊 Actores: {len(data)}")
 
         for row in data:
 
@@ -322,7 +338,6 @@ def ejecutar():
 
             print("👤", actor_nombre)
 
-            # 🔥 traer niños
             payload_ninos = {
                 "jsonrpc":"2.0",
                 "method":"call",
