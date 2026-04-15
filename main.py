@@ -6,18 +6,15 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # =========================================================
-# 🔹 CONFIGURACIÓN
+# CONFIG
 # =========================================================
 URL = "https://seaap.minsa.gob.pe/web"
 
-# =========================================================
-# 🔹 VARIABLES DE ENTORNO
-# =========================================================
 USUARIO = os.environ.get("SEAAP_USER")
 PASSWORD = os.environ.get("SEAAP_PASS")
 
 # =========================================================
-# 🔹 GOOGLE SHEETS (DESDE SECRET)
+# GOOGLE SHEETS (SECRET)
 # =========================================================
 scope = [
     "https://spreadsheets.google.com/feeds",
@@ -29,36 +26,20 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
 spreadsheet = client.open("DATA COMPROMISO 1 CONSOLIDADO ABRIL ")
+sheet = spreadsheet.worksheet("RURAL")
 
-print("📄 Detectando hojas de actores...")
-
-HOJAS_ACTORES = [
-    h.title for h in spreadsheet.worksheets()
-    if h.title not in ["telefono", "Sheet1","RURAL","FIRMAS","HEMOGLOBINA","VACUNAS","SEGUIMIENTO 1","SEGUIMIENTO GESTORA","CONSOLIDADO"]
-]
-
-print("🟢 Hojas detectadas:", HOJAS_ACTORES)
+print("🟢 Conectado a Google Sheets")
 
 # =========================================================
-# 🔹 CARGAR DNIs
+# CARGAR DNIs
 # =========================================================
-sheets = {}
-dni_filas = {}
+dni_columna = sheet.col_values(4)
+dni_fila = {str(dni): i+1 for i, dni in enumerate(dni_columna) if dni}
 
-print("📥 Cargando DNIs...")
-
-for nombre in HOJAS_ACTORES:
-    sh = spreadsheet.worksheet(nombre)
-    sheets[nombre] = sh
-
-    dni_columna = sh.col_values(3)
-
-    dni_filas[nombre] = {
-        str(dni): i+1 for i, dni in enumerate(dni_columna) if dni
-    }
+print(f"🟢 {len(dni_fila)} DNIs cargados")
 
 # =========================================================
-# 🔹 ACTORES VÁLIDOS
+# ACTORES VALIDOS
 # =========================================================
 hoja_telefono = spreadsheet.worksheet("telefono")
 dni_actores_raw = hoja_telefono.col_values(1)
@@ -67,16 +48,14 @@ ACTORES_VALIDOS_DNI = {
     str(v).strip() for v in dni_actores_raw[1:] if str(v).strip().isdigit()
 }
 
-print(f"🟢 {len(ACTORES_VALIDOS_DNI)} actores válidos")
-
 # =========================================================
-# 🔹 VARIABLES GLOBALES
+# MEMORIA
 # =========================================================
 visitas_para_sheet = []
 formatos_para_sheet = []
 
 # =========================================================
-# 🔹 FUNCIONES
+# FUNCIONES
 # =========================================================
 
 def extraer_dni_actor(texto):
@@ -129,7 +108,13 @@ def obtener_registros_nino(page, nino_id):
             "model": "actividades.registro",
             "method": "read",
             "args": [registro_ids],
-            "kwargs": {"fields": ["id", "ficha", "fecha_visita_1"]}
+            "kwargs": {
+                "fields": [
+                    "id","ficha","fecha_visita_1",
+                    "observaciones","tipo_motivo",
+                    "district_motivo","motivo_ids"
+                ]
+            }
         },
         "id": 402
     }
@@ -142,7 +127,78 @@ def obtener_registros_nino(page, nino_id):
     return response2.get("result", [])
 
 
+def registrar_visitas_sheet(dni, registros):
+
+    fila = dni_fila.get(str(dni))
+    if not fila:
+        return
+
+    registros_validos = [r for r in registros if r.get("ficha") in [1,2,4,5]]
+
+    registros_ordenados = sorted(
+        registros_validos,
+        key=lambda x: x.get("fecha_visita_1") or ""
+    )
+
+    columnas = ["AF", "AI", "AL"]
+
+    colores = {
+        1: {"red":0.75,"green":0.95,"blue":0.75},
+        2: {"red":0.75,"green":0.95,"blue":0.75},
+        4: {"red":1,"green":0.65,"blue":0.65},
+        5: {"red":0.8,"green":0.65,"blue":0.95}
+    }
+
+    for i, reg in enumerate(registros_ordenados[:3]):
+
+        fecha = reg.get("fecha_visita_1")
+        ficha = int(reg.get("ficha", 0))
+
+        if not fecha:
+            continue
+
+        # 🔹 construir observación
+        partes = []
+
+        if reg.get("observaciones"):
+            partes.append(str(reg["observaciones"]))
+
+        if reg.get("tipo_motivo") and isinstance(reg["tipo_motivo"], list):
+            partes.append(reg["tipo_motivo"][1])
+
+        if reg.get("motivo_ids"):
+            for m in reg["motivo_ids"]:
+                if isinstance(m, list):
+                    partes.append(m[1])
+
+        if reg.get("district_motivo") and isinstance(reg["district_motivo"], list):
+            partes.append(reg["district_motivo"][1])
+
+        texto_final = " - ".join(dict.fromkeys(partes)).strip()
+
+        col = columnas[i]
+
+        visitas_para_sheet.append({
+            "range": f"RURAL!{col}{fila}",
+            "values": [[fecha]]
+        })
+
+        # observaciones solo fichas 4 y 5
+        if ficha in [4,5] and texto_final:
+            visitas_para_sheet.append({
+                "range": f"RURAL!AO{fila}",
+                "values": [[texto_final]]
+            })
+
+        if ficha in colores:
+            formatos_para_sheet.append({
+                "celda": f"{col}{fila}",
+                "color": colores[ficha]
+            })
+
+
 def enviar_visitas():
+
     if not visitas_para_sheet:
         print("📭 Sin datos")
         return
@@ -154,9 +210,40 @@ def enviar_visitas():
         "data": visitas_para_sheet
     })
 
+    if formatos_para_sheet:
+
+        requests = []
+
+        for f in formatos_para_sheet:
+
+            row, col = gspread.utils.a1_to_rowcol(f["celda"])
+
+            requests.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet.id,
+                        "startRowIndex": row-1,
+                        "endRowIndex": row,
+                        "startColumnIndex": col-1,
+                        "endColumnIndex": col
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": f["color"]
+                        }
+                    },
+                    "fields": "userEnteredFormat.backgroundColor"
+                }
+            })
+
+        spreadsheet.batch_update({"requests": requests})
+
     print("✅ Sheets actualizado")
 
 
+# =========================================================
+# EJECUCION
+# =========================================================
 def ejecutar():
 
     visitas_para_sheet.clear()
@@ -167,13 +254,12 @@ def ejecutar():
         browser = p.chromium.launch(headless=True)
 
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120",
             locale="es-PE"
         )
 
         page = context.new_page()
 
-        # 🔥 Anti-detección
         page.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', {
             get: () => undefined
@@ -181,24 +267,60 @@ def ejecutar():
         """)
 
         print("🌐 Abriendo SEAAP...")
-
         page.goto(URL, timeout=60000)
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(5000)
 
-        print("🌍 URL actual:", page.url)
+        print("🌍 URL:", page.url)
 
         login_seaap(page)
 
-        print("📊 Extracción básica OK (puedes continuar lógica aquí)")
+        print("📊 Extrayendo...")
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "actividades.padron.nominal",
+                "method": "read_group",
+                "args": [
+                    [["parent_id","=",103]],
+                    ["actor_id"],
+                    ["actor_id"]
+                ]
+            },
+            "id": 1
+        }
+
+        response = page.evaluate("""async (p)=>{
+            const r = await fetch('/web/dataset/call_kw',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+            return await r.json();
+        }""", payload)
+
+        data = response.get("result", [])
+
+        for row in data:
+            if not row.get("actor_id"):
+                continue
+
+            actor_nombre = row["actor_id"][1]
+            actor_id = row["actor_id"][0]
+
+            dni_actor = extraer_dni_actor(actor_nombre)
+
+            if dni_actor not in ACTORES_VALIDOS_DNI:
+                continue
+
+            print(f"👤 {actor_nombre}")
+
+            # 🔹 aquí deberías seguir tu lógica de niños (si quieres lo optimizamos luego)
 
         enviar_visitas()
-
-        print("✅ Proceso terminado")
+        print("✅ FIN")
 
 
 # =========================================================
-# 🔹 ENTRYPOINT
+# MAIN
 # =========================================================
 if __name__ == "__main__":
     try:
