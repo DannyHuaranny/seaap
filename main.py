@@ -92,9 +92,34 @@ def esperar_login_real(page):
 # =========================================================
 def login_seaap(page):
 
-    page.goto(URL_LOGIN)
-    page.wait_for_selector("input[name='login']")
+    print("🌐 Abriendo login...")
 
+    for intento in range(3):
+
+        page.goto(URL_LOGIN, timeout=60000)
+
+        page.wait_for_timeout(3000)
+
+        html = page.content()
+
+        # 🔍 DEBUG: ver si cargó algo raro
+        if "login" not in html.lower():
+            print(f"⚠ Intento {intento+1}: página sospechosa")
+            print("URL actual:", page.url)
+
+        try:
+            page.wait_for_selector("input[name='login']", timeout=15000)
+            print("🟢 Login cargado correctamente")
+            break
+        except:
+            print(f"❌ No apareció login (intento {intento+1})")
+            if intento == 2:
+                raise Exception("❌ No se pudo cargar la página de login")
+            time.sleep(5)
+
+    # =========================
+    # LOGIN NORMAL (tu lógica)
+    # =========================
     page.click("input[name='login']")
     page.keyboard.type(USUARIO, delay=50)
 
