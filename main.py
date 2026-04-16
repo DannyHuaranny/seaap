@@ -54,71 +54,61 @@ HOJAS_ACTORES = [
 print("🟢 Hojas:", HOJAS_ACTORES)
 
 # =========================================================
-# 🔹 CARGA DNIs
-# =========================================================
-sheets = {}
-dni_filas = {}
-
-for nombre in HOJAS_ACTORES:
-    sh = spreadsheet.worksheet(nombre)
-    sheets[nombre] = sh
-
-    dni_col = sh.col_values(3)
-
-    dni_filas[nombre] = {
-        str(dni): i + 1
-        for i, dni in enumerate(dni_col)
-        if dni
-    }
-
-# =========================================================
-# 🔹 ACTORES
-# =========================================================
-hoja_tel = spreadsheet.worksheet("telefono")
-ACTORES_VALIDOS_DNI = {
-    str(v).strip()
-    for v in hoja_tel.col_values(1)[1:]
-    if str(v).strip().isdigit()
-}
-
-# =========================================================
 # 🔹 HELPERS
 # =========================================================
-def extraer_dni_actor(texto):
-    m = re.match(r"^\[(\d+)\]", str(texto).strip())
-    return m.group(1) if m else None
-
 def esperar_login_real(page):
-    for _ in range(25):
+    for _ in range(30):
         if "login" not in page.url:
             return True
         page.wait_for_timeout(1000)
     return False
 
 # =========================================================
-# 🔹 LOGIN FIXED
+# 🔥 LOGIN PRO (AQUÍ ESTÁ EL FIX REAL)
 # =========================================================
 def login_seaap(page):
 
-    page.goto(URL_LOGIN)
-    page.wait_for_selector("input[name='login']")
+    print("🌐 Abriendo login...")
+    page.goto(URL_LOGIN, timeout=60000)
 
-    page.fill("input[name='login']", USUARIO)
-    page.fill("input[name='password']", PASSWORD)
+    page.wait_for_selector("input[name='login']", timeout=30000)
+
+    # 🔥 escribir como humano (anti-bot)
+    page.click("input[name='login']")
+    page.keyboard.type(USUARIO, delay=50)
+
+    page.click("input[name='password']")
+    page.keyboard.type(PASSWORD, delay=50)
+
+    page.wait_for_timeout(500)
+
+    print("🔐 Enviando credenciales...")
     page.click("button[type='submit']")
 
     page.wait_for_load_state("domcontentloaded")
 
     if not esperar_login_real(page):
-        raise Exception("❌ Login falló")
+        raise Exception("❌ Login falló o bloqueado")
 
-    page.goto(URL_WEB)
-    page.wait_for_load_state("domcontentloaded")
+    print("🟢 Login inicial OK → URL:", page.url)
 
+    # 🔥 ESPERAR REDIRECCIONES COMPLETAS
+    page.wait_for_timeout(3000)
+
+    # 🔥 FORZAR ENTRADA A /web
+    page.goto(URL_WEB, timeout=60000)
+
+    # 🔥 esperar elementos reales de Odoo (no solo DOM)
+    try:
+        page.wait_for_selector(".o_main_navbar", timeout=20000)
+    except:
+        print("⚠ Navbar no detectado, intentando continuar...")
+
+    # 🔥 VALIDAR sesión real
     if "login" in page.url:
-        raise Exception("❌ Sesión inválida")
+        raise Exception("❌ Redirigido a login nuevamente → bloqueo o fallo")
 
-    print("⏳ Esperando Odoo...")
+    print("⏳ Esperando sesión Odoo...")
 
     page.wait_for_function("""
         () => window.odoo && window.odoo.session_info
@@ -126,7 +116,7 @@ def login_seaap(page):
 
     page.wait_for_timeout(2000)
 
-    print("🟢 Sesión lista")
+    print("🟢 Sesión Odoo completamente lista")
 
 # =========================================================
 # 🔹 API
@@ -164,7 +154,7 @@ def validar_api(page):
         "id": 1
     }
 
-    for i in range(8):
+    for i in range(10):
         r = call_kw(page, payload)
 
         if r and not r.get("error"):
@@ -172,7 +162,7 @@ def validar_api(page):
             return True
 
         print(f"⏳ retry {i+1}")
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(3000)
 
     print("❌ FALLÓ API:", r)
     print("DEBUG:", page.evaluate("() => window.odoo?.session_info"))
@@ -188,18 +178,34 @@ def ejecutar():
 
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox","--disable-dev-shm-usage"]
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
         )
 
-        context = browser.new_context()
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            locale="es-PE",
+            viewport={"width": 1280, "height": 720}
+        )
+
         page = context.new_page()
+
+        # 🔥 anti-detección
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            })
+        """)
 
         login_seaap(page)
 
         if not validar_api(page):
             raise Exception("❌ API no válida")
 
-        print("🚀 TODO OK → aquí sigue tu scraping")
+        print("🚀 TODO OK → scraping listo")
 
         browser.close()
 
