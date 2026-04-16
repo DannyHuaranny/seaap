@@ -1,6 +1,8 @@
 import os
 import time
 import re
+import json
+import tempfile
 from playwright.sync_api import sync_playwright
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -18,14 +20,23 @@ if not USUARIO or not PASSWORD:
     raise EnvironmentError("❌ Variables de entorno SEAAP_USER y SEAAP_PASS no definidas")
 
 # =========================================================
-# 🔹 GOOGLE SHEETS
+# 🔹 GOOGLE SHEETS — leer creds desde secret GOOGLE_CREDS
 # =========================================================
+GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS")
+if not GOOGLE_CREDS_JSON:
+    raise EnvironmentError("❌ Variable de entorno GOOGLE_CREDS no definida")
+
+# Escribir el JSON en un archivo temporal para oauth2client
+with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+    tmp.write(GOOGLE_CREDS_JSON)
+    CREDS_PATH = tmp.name
+
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds  = ServiceAccountCredentials.from_json_keyfile_name("credenciales.json", scope)
+creds  = ServiceAccountCredentials.from_json_keyfile_name(CREDS_PATH, scope)
 client = gspread.authorize(creds)
 
 spreadsheet = client.open("DATA COMPROMISO 1 CONSOLIDADO ABRIL ")
@@ -347,9 +358,8 @@ def ejecutar_seaap():
 
     with sync_playwright() as p:
 
-        # ── Browser: GitHub Actions corre en Linux → usa Playwright Chromium ──
-        # ── En local con Chrome instalado también funciona                    ──
-        launch_kwargs = dict(
+        # GitHub Actions (Ubuntu): usa el Chromium de Playwright directamente
+        browser = p.chromium.launch(
             headless=True,
             args=[
                 "--disable-blink-features=AutomationControlled",
@@ -357,18 +367,6 @@ def ejecutar_seaap():
                 "--disable-dev-shm-usage"
             ]
         )
-
-        # Si hay Chrome local (Windows), úsalo; si no, Playwright usa el suyo
-        chrome_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        ]
-        for path in chrome_paths:
-            if os.path.exists(path):
-                launch_kwargs["executable_path"] = path
-                break
-
-        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
