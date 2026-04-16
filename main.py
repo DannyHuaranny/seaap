@@ -16,15 +16,12 @@ USUARIO  = os.getenv("SEAAP_USER")
 PASSWORD = os.getenv("SEAAP_PASS")
 
 if not USUARIO or not PASSWORD:
-    raise EnvironmentError("❌ Variables SEAAP_USER y SEAAP_PASS no definidas")
+    raise Exception("❌ Faltan credenciales")
 
 # =========================================================
 # 🔹 GOOGLE SHEETS
 # =========================================================
 GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS")
-
-if not GOOGLE_CREDS_JSON:
-    raise EnvironmentError("❌ GOOGLE_CREDS no definido")
 
 with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
     tmp.write(GOOGLE_CREDS_JSON)
@@ -40,8 +37,6 @@ client = gspread.authorize(creds)
 
 spreadsheet = client.open("DATA COMPROMISO 1 CONSOLIDADO ABRIL ")
 
-print("📄 Detectando hojas...")
-
 HOJAS_ACTORES = [
     h.title for h in spreadsheet.worksheets()
     if h.title not in [
@@ -50,8 +45,6 @@ HOJAS_ACTORES = [
         "SEGUIMIENTO GESTORA","CONSOLIDADO"
     ]
 ]
-
-print("🟢 Hojas:", HOJAS_ACTORES)
 
 # =========================================================
 # 🔹 CARGA DNIs
@@ -66,13 +59,22 @@ for nombre in HOJAS_ACTORES:
     dni_col = sh.col_values(3)
 
     dni_filas[nombre] = {
-        str(dni): i + 1
-        for i, dni in enumerate(dni_col)
-        if dni
+        str(dni): i+1 for i, dni in enumerate(dni_col) if dni
     }
 
 # =========================================================
-# 🔹 VARIABLES GLOBALES
+# 🔹 ACTORES
+# =========================================================
+hoja_tel = spreadsheet.worksheet("telefono")
+
+ACTORES_VALIDOS_DNI = {
+    str(v).strip()
+    for v in hoja_tel.col_values(1)[1:]
+    if str(v).strip().isdigit()
+}
+
+# =========================================================
+# 🔹 VARIABLES
 # =========================================================
 visitas_para_sheet  = []
 formatos_para_sheet = []
@@ -80,6 +82,10 @@ formatos_para_sheet = []
 # =========================================================
 # 🔹 HELPERS
 # =========================================================
+def extraer_dni_actor(texto):
+    m = re.match(r"^\[(\d+)\]", str(texto).strip())
+    return m.group(1) if m else None
+
 def esperar_login_real(page):
     for _ in range(25):
         if "login" not in page.url:
@@ -104,82 +110,38 @@ def call_kw(page, payload):
     """, payload)
 
 # =========================================================
-# 🔥 LOGIN (EL QUE FUNCIONA)
+# 🔥 LOGIN (ESTABLE)
 # =========================================================
 def login_seaap(page):
 
-    print("🌐 Abriendo login...")
-    page.goto(URL_LOGIN, timeout=60000)
+    print("🌐 Login...")
+    page.goto(URL_LOGIN)
 
-    page.wait_for_selector("input[name='login']", timeout=30000)
+    page.wait_for_selector("input[name='login']")
 
-    print("🔐 Enviando credenciales...")
     page.fill("input[name='login']", USUARIO)
     page.fill("input[name='password']", PASSWORD)
+
     page.click("button[type='submit']")
 
     page.wait_for_load_state("domcontentloaded")
 
-    ok = esperar_login_real(page)
+    if not esperar_login_real(page):
+        raise Exception("❌ Login falló")
 
-    print("🌐 URL actual:", page.url)
-
-    if not ok or "login" in page.url:
-        raise Exception("❌ Login falló o bloqueado")
-
-    print("🟢 Login REAL exitoso")
-
-    page.goto(URL_WEB, timeout=60000)
-    page.wait_for_load_state("domcontentloaded")
+    page.goto(URL_WEB)
 
     if "login" in page.url:
         raise Exception("❌ Sesión inválida")
 
-    print("🟢 Sesión Odoo activa")
-
-# =========================================================
-# 🔹 VALIDAR API (tolerante)
-# =========================================================
-def validar_api(page):
-
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "res.partner",
-            "method": "search_read",
-            "args": [[]],
-            "kwargs": {"limit": 1}
-        },
-        "id": 1
-    }
-
-    for i in range(8):
-        r = call_kw(page, payload)
-
-        if r:
-            if not r.get("error"):
-                print("🟢 API OK")
-                return True
-
-            error_name = r.get("error", {}).get("data", {}).get("name")
-
-            if error_name == "odoo.exceptions.AccessError":
-                print("🟢 API OK (limitado)")
-                return True
-
-        print(f"⏳ retry {i+1}")
-        time.sleep(2)
-
-    print("❌ API FALLÓ:", r)
-    return False
+    print("🟢 Sesión OK")
 
 # =========================================================
 # 🔹 OBTENER REGISTROS
 # =========================================================
 def obtener_registros_nino(page, nino_id):
 
-    response = call_kw(page, {
+    r = call_kw(page, {
         "jsonrpc": "2.0",
         "method": "call",
         "params": {
@@ -191,114 +153,123 @@ def obtener_registros_nino(page, nino_id):
         "id": 1
     })
 
-    if not response.get("result"):
+    ids = r.get("result", [{}])[0].get("registro_ids", [])
+
+    if not ids:
         return []
 
-    registro_ids = response["result"][0].get("registro_ids", [])
-
-    if not registro_ids:
-        return []
-
-    response2 = call_kw(page, {
+    r2 = call_kw(page, {
         "jsonrpc": "2.0",
         "method": "call",
         "params": {
             "model": "actividades.registro",
             "method": "read",
-            "args": [registro_ids],
-            "kwargs": {
-                "fields": ["ficha", "fecha_visita_1"]
-            }
+            "args": [ids],
+            "kwargs": {"fields": ["ficha","fecha_visita_1"]}
         },
         "id": 2
     })
 
-    return response2.get("result", [])
+    return r2.get("result", [])
 
 # =========================================================
-# 🔹 GOOGLE SHEETS (PINTAR)
+# 🔹 OBTENER NIÑOS POR ACTOR
+# =========================================================
+def obtener_ninos_actor(page, actor_id):
+
+    r = call_kw(page, {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "actividades.padron.nominal",
+            "method": "search_read",
+            "args": [[
+                ["actor_id","=",actor_id],
+                ["parent_id","=",103],
+                ["year",">",2023],
+                ["estado_carga","not in",["borrador","cargado"]]
+            ]],
+            "kwargs": {
+                "fields": ["id","name","documento_numero","total_valid_intervenciones"],
+                "limit": 200
+            }
+        },
+        "id": 3
+    })
+
+    return r.get("result", [])
+
+# =========================================================
+# 🔹 SHEETS
 # =========================================================
 def registrar_visitas_sheet(dni, registros):
 
-    fila = None
-    hoja_destino = None
+    for hoja, dic in dni_filas.items():
 
-    for nombre_hoja, dic_dni in dni_filas.items():
-        if str(dni) in dic_dni:
-            fila = dic_dni[str(dni)]
-            hoja_destino = nombre_hoja
-            break
-
-    if not fila:
-        return
-
-    registros_validos = [
-        r for r in registros if r.get("ficha") in [1,2,4,5]
-    ]
-
-    registros_ordenados = sorted(
-        registros_validos,
-        key=lambda x: x.get("fecha_visita_1") or ""
-    )
-
-    columnas = ["Z","AC","AF"]
-
-    colores = {
-        1: {"red":0.75,"green":0.95,"blue":0.75},
-        2: {"red":0.75,"green":0.95,"blue":0.75},
-        4: {"red":1,"green":0.65,"blue":0.65},
-        5: {"red":0.8,"green":0.65,"blue":0.95}
-    }
-
-    for i, reg in enumerate(registros_ordenados[:3]):
-
-        fecha = reg.get("fecha_visita_1")
-        if not fecha:
+        if dni not in dic:
             continue
 
-        ficha = int(reg.get("ficha", 0))
-        columna = columnas[i]
-        celda = f"{hoja_destino}!{columna}{fila}"
+        fila = dic[dni]
 
-        visitas_para_sheet.append({
-            "range": celda,
-            "values": [[fecha]]
-        })
+        registros = sorted(
+            [r for r in registros if r.get("ficha") in [1,2,4,5]],
+            key=lambda x: x.get("fecha_visita_1") or ""
+        )
 
-        if ficha in colores:
-            formatos_para_sheet.append({
-                "hoja": hoja_destino,
-                "celda": f"{columna}{fila}",
-                "color": colores[ficha]
+        columnas = ["Z","AC","AF"]
+
+        colores = {
+            1: {"red":0.75,"green":0.95,"blue":0.75},
+            2: {"red":0.75,"green":0.95,"blue":0.75},
+            4: {"red":1,"green":0.65,"blue":0.65},
+            5: {"red":0.8,"green":0.65,"blue":0.95}
+        }
+
+        for i, reg in enumerate(registros[:3]):
+
+            fecha = reg.get("fecha_visita_1")
+            if not fecha:
+                continue
+
+            col = columnas[i]
+
+            visitas_para_sheet.append({
+                "range": f"{hoja}!{col}{fila}",
+                "values": [[fecha]]
             })
 
-def enviar_visitas_a_sheet():
+            if reg["ficha"] in colores:
+                formatos_para_sheet.append({
+                    "hoja": hoja,
+                    "celda": f"{col}{fila}",
+                    "color": colores[reg["ficha"]]
+                })
 
-    if not visitas_para_sheet:
-        print("📭 Sin datos")
-        return
+# =========================================================
+def enviar_visitas():
 
-    spreadsheet.values_batch_update({
-        "valueInputOption": "USER_ENTERED",
-        "data": visitas_para_sheet
-    })
+    if visitas_para_sheet:
+        spreadsheet.values_batch_update({
+            "valueInputOption": "USER_ENTERED",
+            "data": visitas_para_sheet
+        })
 
     if formatos_para_sheet:
 
-        requests = []
+        req = []
 
         for f in formatos_para_sheet:
-            row, col = gspread.utils.a1_to_rowcol(f["celda"])
-            sheet_id = sheets[f["hoja"]].id
 
-            requests.append({
+            r,c = gspread.utils.a1_to_rowcol(f["celda"])
+
+            req.append({
                 "repeatCell": {
                     "range": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": row-1,
-                        "endRowIndex": row,
-                        "startColumnIndex": col-1,
-                        "endColumnIndex": col
+                        "sheetId": sheets[f["hoja"]].id,
+                        "startRowIndex": r-1,
+                        "endRowIndex": r,
+                        "startColumnIndex": c-1,
+                        "endColumnIndex": c
                     },
                     "cell": {
                         "userEnteredFormat": {
@@ -309,9 +280,9 @@ def enviar_visitas_a_sheet():
                 }
             })
 
-        spreadsheet.batch_update({"requests": requests})
+        spreadsheet.batch_update({"requests": req})
 
-    print("✅ Sheets actualizado")
+    print("✅ Sheets listo")
 
 # =========================================================
 # 🔹 MAIN
@@ -320,69 +291,78 @@ def ejecutar():
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage"
-            ]
+        browser = p.chromium.launch(headless=True,
+            args=["--no-sandbox","--disable-dev-shm-usage"]
         )
 
-        # 🔥 IMPORTANTE (esto arregla tu problema)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             locale="es-PE",
-            viewport={"width": 1280, "height": 720}
+            viewport={"width":1280,"height":720}
         )
 
         page = context.new_page()
 
-        # anti-bot
         page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            })
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined})
         """)
 
         login_seaap(page)
 
-        if not validar_api(page):
-            raise Exception("❌ API no válida")
+        print("📊 Extrayendo actores...")
 
-        print("📊 Consultando padron nominal...")
-
-        response = call_kw(page, {
-            "jsonrpc": "2.0",
-            "method": "call",
-            "params": {
-                "model": "actividades.padron.nominal",
-                "method": "search_read",
-                "args": [[]],
-                "kwargs": {
-                    "fields": ["id","documento_numero"],
-                    "limit": 50
-                }
+        data = call_kw(page, {
+            "jsonrpc":"2.0",
+            "method":"call",
+            "params":{
+                "model":"actividades.padron.nominal",
+                "method":"read_group",
+                "args":[[
+                    ["parent_id","=",103],
+                    ["year",">",2023],
+                    ["estado_carga","not in",["borrador","cargado"]]
+                ],
+                ["actor_id"],
+                ["actor_id"]],
+                "kwargs":{}
             },
-            "id": 10
-        })
+            "id":1
+        }).get("result", [])
 
-        data = response.get("result", [])
+        procesados = set()
 
-        for nino in data:
+        for row in data:
 
-            dni = nino.get("documento_numero")
-            nino_id = nino.get("id")
-
-            if not dni:
+            if not row.get("actor_id"):
                 continue
 
-            registros = obtener_registros_nino(page, nino_id)
+            actor_id, nombre = row["actor_id"]
 
-            if registros:
-                registrar_visitas_sheet(dni, registros)
+            dni = extraer_dni_actor(nombre)
 
-        enviar_visitas_a_sheet()
+            if dni not in ACTORES_VALIDOS_DNI:
+                continue
+
+            if actor_id in procesados:
+                continue
+
+            procesados.add(actor_id)
+
+            print(f"\n👤 {nombre}")
+
+            ninos = obtener_ninos_actor(page, actor_id)
+
+            for n in ninos:
+
+                if n.get("total_valid_intervenciones",0) == 0:
+                    continue
+
+                registros = obtener_registros_nino(page, n["id"])
+
+                if registros:
+                    registrar_visitas_sheet(n["documento_numero"], registros)
+
+        enviar_visitas()
 
         browser.close()
 
