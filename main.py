@@ -81,74 +81,12 @@ formatos_para_sheet = []
 # 🔹 HELPERS
 # =========================================================
 def esperar_login_real(page):
-    for _ in range(30):
+    for _ in range(25):
         if "login" not in page.url:
             return True
         page.wait_for_timeout(1000)
     return False
 
-# =========================================================
-# 🔥 LOGIN ROBUSTO
-# =========================================================
-def login_seaap(page):
-
-    print("🌐 Abriendo login...")
-
-    for intento in range(3):
-
-        page.goto(URL_LOGIN, timeout=60000)
-
-        page.wait_for_timeout(3000)
-
-        html = page.content()
-
-        # 🔍 DEBUG: ver si cargó algo raro
-        if "login" not in html.lower():
-            print(f"⚠ Intento {intento+1}: página sospechosa")
-            print("URL actual:", page.url)
-
-        try:
-            page.wait_for_selector("input[name='login']", timeout=15000)
-            print("🟢 Login cargado correctamente")
-            break
-        except:
-            print(f"❌ No apareció login (intento {intento+1})")
-            if intento == 2:
-                raise Exception("❌ No se pudo cargar la página de login")
-            time.sleep(5)
-
-    # =========================
-    # LOGIN NORMAL (tu lógica)
-    # =========================
-    page.click("input[name='login']")
-    page.keyboard.type(USUARIO, delay=50)
-
-    page.click("input[name='password']")
-    page.keyboard.type(PASSWORD, delay=50)
-
-    page.click("button[type='submit']")
-
-    page.wait_for_load_state("domcontentloaded")
-
-    if not esperar_login_real(page):
-        raise Exception("❌ Login falló")
-
-    page.wait_for_timeout(3000)
-
-    page.goto(URL_WEB)
-
-    if "login" in page.url:
-        raise Exception("❌ Sesión inválida")
-
-    page.wait_for_function("""
-        () => window.odoo && window.odoo.session_info
-    """, timeout=30000)
-
-    print("🟢 Sesión Odoo lista")
-
-# =========================================================
-# 🔹 API
-# =========================================================
 def call_kw(page, payload):
     return page.evaluate("""
         async (payload) => {
@@ -164,6 +102,40 @@ def call_kw(page, payload):
             return await res.json();
         }
     """, payload)
+
+# =========================================================
+# 🔥 LOGIN (EL QUE FUNCIONA)
+# =========================================================
+def login_seaap(page):
+
+    print("🌐 Abriendo login...")
+    page.goto(URL_LOGIN, timeout=60000)
+
+    page.wait_for_selector("input[name='login']", timeout=30000)
+
+    print("🔐 Enviando credenciales...")
+    page.fill("input[name='login']", USUARIO)
+    page.fill("input[name='password']", PASSWORD)
+    page.click("button[type='submit']")
+
+    page.wait_for_load_state("domcontentloaded")
+
+    ok = esperar_login_real(page)
+
+    print("🌐 URL actual:", page.url)
+
+    if not ok or "login" in page.url:
+        raise Exception("❌ Login falló o bloqueado")
+
+    print("🟢 Login REAL exitoso")
+
+    page.goto(URL_WEB, timeout=60000)
+    page.wait_for_load_state("domcontentloaded")
+
+    if "login" in page.url:
+        raise Exception("❌ Sesión inválida")
+
+    print("🟢 Sesión Odoo activa")
 
 # =========================================================
 # 🔹 VALIDAR API (tolerante)
@@ -182,7 +154,7 @@ def validar_api(page):
         "id": 1
     }
 
-    for i in range(10):
+    for i in range(8):
         r = call_kw(page, payload)
 
         if r:
@@ -197,13 +169,13 @@ def validar_api(page):
                 return True
 
         print(f"⏳ retry {i+1}")
-        page.wait_for_timeout(3000)
+        time.sleep(2)
 
     print("❌ API FALLÓ:", r)
     return False
 
 # =========================================================
-# 🔹 REGISTROS ODOO
+# 🔹 OBTENER REGISTROS
 # =========================================================
 def obtener_registros_nino(page, nino_id):
 
@@ -244,7 +216,7 @@ def obtener_registros_nino(page, nino_id):
     return response2.get("result", [])
 
 # =========================================================
-# 🔹 GOOGLE SHEETS
+# 🔹 GOOGLE SHEETS (PINTAR)
 # =========================================================
 def registrar_visitas_sheet(dni, registros):
 
@@ -350,11 +322,28 @@ def ejecutar():
 
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox","--disable-dev-shm-usage"]
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
+            ]
         )
 
-        context = browser.new_context()
+        # 🔥 IMPORTANTE (esto arregla tu problema)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            locale="es-PE",
+            viewport={"width": 1280, "height": 720}
+        )
+
         page = context.new_page()
+
+        # anti-bot
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            })
+        """)
 
         login_seaap(page)
 
