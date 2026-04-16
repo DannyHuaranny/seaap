@@ -15,6 +15,9 @@ URL_WEB   = "http://seaap.minsa.gob.pe/web"
 USUARIO  = os.getenv("SEAAP_USER")
 PASSWORD = os.getenv("SEAAP_PASS")
 
+if not USUARIO or not PASSWORD:
+    raise Exception("❌ Faltan credenciales")
+
 # =========================================================
 # 🔹 GOOGLE SHEETS
 # =========================================================
@@ -34,9 +37,7 @@ client = gspread.authorize(creds)
 
 spreadsheet = client.open("DATA COMPROMISO 1 CONSOLIDADO ABRIL ")
 
-# =========================================================
-# 🔹 HOJAS
-# =========================================================
+# hojas
 HOJAS_ACTORES = [
     h.title for h in spreadsheet.worksheets()
     if h.title not in [
@@ -49,6 +50,8 @@ HOJAS_ACTORES = [
 sheets = {}
 dni_filas = {}
 
+print("📄 Detectando hojas...")
+
 for nombre in HOJAS_ACTORES:
     sh = spreadsheet.worksheet(nombre)
     sheets[nombre] = sh
@@ -56,11 +59,15 @@ for nombre in HOJAS_ACTORES:
     dni_col = sh.col_values(3)
 
     dni_filas[nombre] = {
-        str(dni): i+1 for i, dni in enumerate(dni_col) if dni
+        str(dni): i + 1
+        for i, dni in enumerate(dni_col)
+        if dni
     }
 
+print("🟢 Hojas:", HOJAS_ACTORES)
+
 # =========================================================
-# 🔹 ACTORES
+# 🔹 ACTORES VALIDOS
 # =========================================================
 hoja_tel = spreadsheet.worksheet("telefono")
 
@@ -77,6 +84,25 @@ def extraer_dni_actor(texto):
     m = re.match(r"^\[(\d+)\]", str(texto).strip())
     return m.group(1) if m else None
 
+def call_kw(page, payload):
+    return page.evaluate("""
+        async (payload) => {
+            const res = await fetch('/web/dataset/call_kw', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify(payload)
+            });
+            return await res.json();
+        }
+    """, payload)
+
+# =========================================================
+# 🔹 LOGIN (EL QUE TE FUNCIONA)
+# =========================================================
 def esperar_login_real(page):
     for _ in range(25):
         if "login" not in page.url:
@@ -84,15 +110,11 @@ def esperar_login_real(page):
         page.wait_for_timeout(1000)
     return False
 
-# =========================================================
-# 🔹 LOGIN BUENO (NO TOCAR)
-# =========================================================
 def login_seaap(page):
 
     print("🌐 Abriendo login...")
 
     page.goto(URL_LOGIN, timeout=60000)
-
     page.wait_for_selector("input[name='login']", timeout=30000)
 
     print("🔐 Enviando credenciales...")
@@ -121,66 +143,7 @@ def login_seaap(page):
     print("🟢 Sesión Odoo activa")
 
 # =========================================================
-# 🔹 API
-# =========================================================
-def call_kw(page, payload):
-    return page.evaluate("""
-        async (payload) => {
-            const res = await fetch('/web/dataset/call_kw', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload)
-            });
-            return await res.json();
-        }
-    """, payload)
-
-# =========================================================
-# 🔹 REGISTROS NIÑO (TU LÓGICA)
-# =========================================================
-def obtener_registros_nino(page, nino_id):
-
-    r1 = call_kw(page, {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "actividades.padron.nominal",
-            "method": "read",
-            "args": [[nino_id]],
-            "kwargs": {"fields": ["registro_ids"]}
-        },
-        "id": 401
-    })
-
-    if not r1.get("result"):
-        return []
-
-    ids = r1["result"][0].get("registro_ids", [])
-    if not ids:
-        return []
-
-    r2 = call_kw(page, {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "actividades.registro",
-            "method": "read",
-            "args": [ids],
-            "kwargs": {
-                "fields": ["id", "ficha", "fecha_visita_1"]
-            }
-        },
-        "id": 402
-    })
-
-    return r2.get("result", [])
-
-# =========================================================
-# 🔹 REGISTRAR EN SHEETS (TU LÓGICA)
+# 🔹 SHEETS
 # =========================================================
 visitas_para_sheet = []
 formatos_para_sheet = []
@@ -199,9 +162,19 @@ def registrar_visitas_sheet(dni, registros):
     if not fila:
         return
 
-    registros = sorted(registros, key=lambda x: x.get("fecha_visita_1") or "")
+    registros_validos = [
+        r for r in registros if r.get("ficha") in [1,2,4,5]
+    ]
 
-    columnas = ["Z", "AC", "AF"]
+    if not registros_validos:
+        return
+
+    registros_ordenados = sorted(
+        registros_validos,
+        key=lambda x: x.get("fecha_visita_1") or ""
+    )
+
+    columnas = ["Z","AC","AF"]
 
     colores = {
         1: {"red":0.75,"green":0.95,"blue":0.75},
@@ -210,25 +183,146 @@ def registrar_visitas_sheet(dni, registros):
         5: {"red":0.8,"green":0.65,"blue":0.95}
     }
 
-    for i, reg in enumerate(registros[:3]):
+    for i, reg in enumerate(registros_ordenados[:3]):
 
         fecha = reg.get("fecha_visita_1")
         if not fecha:
             continue
 
         ficha = int(reg.get("ficha", 0))
+        col = columnas[i]
 
         visitas_para_sheet.append({
-            "range": f"{hoja_destino}!{columnas[i]}{fila}",
+            "range": f"{hoja_destino}!{col}{fila}",
             "values": [[fecha]]
         })
 
         if ficha in colores:
             formatos_para_sheet.append({
                 "hoja": hoja_destino,
-                "celda": f"{columnas[i]}{fila}",
+                "celda": f"{col}{fila}",
                 "color": colores[ficha]
             })
+
+def enviar_visitas_a_sheet():
+
+    if not visitas_para_sheet:
+        print("📭 Sin datos para enviar")
+        return
+
+    print(f"📤 Enviando {len(visitas_para_sheet)} registros...")
+
+    spreadsheet.values_batch_update({
+        "valueInputOption": "USER_ENTERED",
+        "data": visitas_para_sheet
+    })
+
+    if formatos_para_sheet:
+
+        requests = []
+
+        for f in formatos_para_sheet:
+            row, col = gspread.utils.a1_to_rowcol(f["celda"])
+            sheet_id = sheets[f["hoja"]].id
+
+            requests.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": row-1,
+                        "endRowIndex": row,
+                        "startColumnIndex": col-1,
+                        "endColumnIndex": col
+                    },
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": f["color"]
+                        }
+                    },
+                    "fields": "userEnteredFormat.backgroundColor"
+                }
+            })
+
+        spreadsheet.batch_update({"requests": requests})
+
+    print("✅ Sheets actualizado")
+
+# =========================================================
+# 🔥 PROCESO OPTIMIZADO
+# =========================================================
+def procesar(page):
+
+    print("📊 Cargando niños...")
+
+    ninos = call_kw(page, {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "actividades.padron.nominal",
+            "method": "search_read",
+            "args": [[["parent_id","=",103]]],
+            "kwargs": {
+                "fields": ["id","name","documento_numero","actor_id","registro_ids"],
+                "limit": 3000
+            }
+        },
+        "id": 1
+    }).get("result", [])
+
+    print("👶 TOTAL:", len(ninos))
+
+    filtrados = []
+
+    for n in ninos:
+        actor = n.get("actor_id")
+        if not actor:
+            continue
+
+        dni_actor = extraer_dni_actor(actor[1])
+
+        if dni_actor in ACTORES_VALIDOS_DNI:
+            filtrados.append(n)
+
+    print("🟢 FILTRADOS:", len(filtrados))
+
+    all_ids = []
+    mapa = {}
+
+    for n in filtrados:
+        ids = n.get("registro_ids", [])
+        if ids:
+            mapa[n["id"]] = ids
+            all_ids.extend(ids)
+
+    registros = call_kw(page, {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": "actividades.registro",
+            "method": "read",
+            "args": [all_ids],
+            "kwargs": {
+                "fields": ["id","ficha","fecha_visita_1"]
+            }
+        },
+        "id": 2
+    }).get("result", [])
+
+    reg_dict = {r["id"]: r for r in registros}
+
+    for n in filtrados:
+
+        dni = n.get("documento_numero")
+        regs = [
+            reg_dict[rid]
+            for rid in mapa.get(n["id"], [])
+            if rid in reg_dict
+        ]
+
+        if regs:
+            registrar_visitas_sheet(dni, regs)
+
+    enviar_visitas_a_sheet()
 
 # =========================================================
 # 🔹 MAIN
@@ -243,56 +337,21 @@ def ejecutar():
         )
 
         context = browser.new_context(
-            user_agent="Mozilla/5.0 Chrome/120",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
             locale="es-PE"
         )
 
         page = context.new_page()
 
         page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined})
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
         """)
 
         login_seaap(page)
 
-        print("📊 Extrayendo datos...")
+        procesar(page)
 
-        data = call_kw(page, {
-            "jsonrpc": "2.0",
-            "method": "call",
-            "params": {
-                "model": "actividades.padron.nominal",
-                "method": "search_read",
-                "args": [[]],
-                "kwargs": {
-                    "fields": ["id","name","documento_numero"],
-                    "limit": 100
-                }
-            },
-            "id": 1
-        }).get("result", [])
-
-        for n in data:
-
-            dni = n.get("documento_numero")
-            nombre = n.get("name")
-            nino_id = n.get("id")
-
-            registros = obtener_registros_nino(page, nino_id)
-
-            if registros:
-                print(f"🧒 {nombre} → {len(registros)} visitas")
-                registrar_visitas_sheet(dni, registros)
-
-        print("📤 Enviando a Sheets...")
-
-        if visitas_para_sheet:
-            spreadsheet.values_batch_update({
-                "valueInputOption": "USER_ENTERED",
-                "data": visitas_para_sheet
-            })
-
-        print("✅ FIN")
+        browser.close()
 
 # =========================================================
 if __name__ == "__main__":
