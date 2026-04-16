@@ -11,7 +11,11 @@ def login_y_probar():
 
         browser = p.chromium.launch(
             headless=True,
-            args=["--disable-blink-features=AutomationControlled"]
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox"
+            ]
         )
 
         context = browser.new_context(
@@ -29,9 +33,10 @@ def login_y_probar():
         """)
 
         print("🌐 Abriendo login...")
-        page.goto(URL, timeout=60000)
+        page.goto(URL, wait_until="domcontentloaded", timeout=60000)
 
-        page.wait_for_selector("input[name='login']", timeout=30000)
+        # 🔥 esperar inputs reales
+        page.wait_for_selector("input[name='login']", timeout=60000)
 
         print("🔐 Enviando credenciales...")
 
@@ -40,18 +45,22 @@ def login_y_probar():
 
         page.click("button[type='submit']")
 
-        page.wait_for_timeout(5000)
+        # 🔥 MEJOR QUE networkidle (en Odoo falla mucho)
+        page.wait_for_timeout(8000)
 
-        print("🌐 URL actual:", page.url)
+        # 🔥 validar login REAL
+        current_url = page.url
+        print("🌐 URL actual:", current_url)
 
-        if "login" in page.url:
-            raise Exception("❌ Login falló")
+        if "/web/login" in current_url:
+            # 🔥 debug clave para GitHub
+            html = page.content()
+            print("📄 HTML snippet:", html[:500])
+            raise Exception("❌ Login falló (bloqueo o redirect Odoo)")
 
         print("🟢 Login REAL exitoso")
 
-        # 🔥 TEST 1: sesión válida (sin permisos raros)
-        print("📡 Probando API segura...")
-
+        # 🔥 validar sesión Odoo
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -78,47 +87,7 @@ def login_y_probar():
             }
         """, payload)
 
-        print("📡 RESPUESTA USERS:", result)
-
-        # 🔥 TEST 2: tu modelo real pero SIN el bloqueado
-        print("📡 Probando padron nominal...")
-
-        payload2 = {
-            "jsonrpc": "2.0",
-            "method": "call",
-            "params": {
-                "model": "actividades.padron.nominal",
-                "method": "search_read",
-                "args": [[
-                    ["parent_id", "=", 103],
-                    ["year", ">", 2023]
-                ]],
-                "kwargs": {
-                    "fields": [
-                        "id",
-                        "name",
-                        "documento_numero",
-                        "actor_id",
-                        "total_valid_intervenciones"
-                    ],
-                    "limit": 10
-                }
-            },
-            "id": 2
-        }
-
-        result2 = page.evaluate("""
-            async (payload) => {
-                const res = await fetch('/web/dataset/call_kw', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
-                return await res.json();
-            }
-        """, payload2)
-
-        print("📡 RESPUESTA PADRON:", result2)
+        print("📡 RESPUESTA API:", result)
 
         browser.close()
 
