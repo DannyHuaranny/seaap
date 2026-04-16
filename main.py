@@ -1,37 +1,17 @@
 from playwright.sync_api import sync_playwright
-import os
-import time
 
-URL_LOGIN = "http://seaap.minsa.gob.pe/web/login"
-URL_WEB = "http://seaap.minsa.gob.pe/web"
+URL = "http://seaap.minsa.gob.pe/web/login"
 
-USUARIO = os.getenv("SEAAP_USER")
-PASSWORD = os.getenv("SEAAP_PASS")
-
-
-def esperar_login_real(page):
-    """Espera a que Odoo realmente cambie de estado de login"""
-    for _ in range(25):
-
-        if "login" not in page.url:
-            return True
-
-        page.wait_for_timeout(1000)
-
-    return False
+USUARIO = "TU_USUARIO"
+PASSWORD = "TU_PASSWORD"
 
 
 def login_y_probar():
-
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage"
-            ]
+            args=["--disable-blink-features=AutomationControlled"]
         )
 
         context = browser.new_context(
@@ -42,7 +22,6 @@ def login_y_probar():
 
         page = context.new_page()
 
-        # Anti-bot básico
         page.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => undefined
@@ -50,7 +29,7 @@ def login_y_probar():
         """)
 
         print("🌐 Abriendo login...")
-        page.goto(URL_LOGIN, timeout=60000)
+        page.goto(URL, timeout=60000)
 
         page.wait_for_selector("input[name='login']", timeout=30000)
 
@@ -61,33 +40,17 @@ def login_y_probar():
 
         page.click("button[type='submit']")
 
-        # 🔥 NO networkidle (Odoo nunca lo cumple)
-        page.wait_for_load_state("domcontentloaded")
-
-        # 🔥 esperar salida real del login
-        ok = esperar_login_real(page)
+        page.wait_for_timeout(5000)
 
         print("🌐 URL actual:", page.url)
 
-        if not ok or "login" in page.url:
-            raise Exception("❌ Login falló o bloqueado")
+        if "login" in page.url:
+            raise Exception("❌ Login falló")
 
         print("🟢 Login REAL exitoso")
 
-        # 🔥 FORZAR sesión Odoo activa
-        page.goto(URL_WEB, timeout=60000)
-        page.wait_for_load_state("domcontentloaded")
-
-        # 🔥 validar sesión real (clave)
-        if "login" in page.url:
-            raise Exception("❌ Sesión inválida (Odoo no autenticó)")
-
-        print("🟢 Sesión Odoo activa")
-
-        # =====================================================
-        # 🔥 TEST API REAL
-        # =====================================================
-        print("📡 Probando API...")
+        # 🔥 TEST 1: sesión válida (sin permisos raros)
+        print("📡 Probando API segura...")
 
         payload = {
             "jsonrpc": "2.0",
@@ -96,40 +59,66 @@ def login_y_probar():
                 "model": "res.users",
                 "method": "search_read",
                 "args": [[]],
-                "kwargs": {"limit": 1}
+                "kwargs": {
+                    "fields": ["id", "name"],
+                    "limit": 1
+                }
             },
             "id": 1
         }
 
-        def call_api():
-            return page.evaluate("""
-                async (payload) => {
-                    const res = await fetch('/web/dataset/call_kw', {
-                        method: 'POST',
-                        credentials: 'same-origin',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Requested-With': 'XMLHttpRequest'
-                        },
-                        body: JSON.stringify(payload)
-                    });
-                    return await res.json();
+        result = page.evaluate("""
+            async (payload) => {
+                const res = await fetch('/web/dataset/call_kw', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                return await res.json();
+            }
+        """, payload)
+
+        print("📡 RESPUESTA USERS:", result)
+
+        # 🔥 TEST 2: tu modelo real pero SIN el bloqueado
+        print("📡 Probando padron nominal...")
+
+        payload2 = {
+            "jsonrpc": "2.0",
+            "method": "call",
+            "params": {
+                "model": "actividades.padron.nominal",
+                "method": "search_read",
+                "args": [[
+                    ["parent_id", "=", 103],
+                    ["year", ">", 2023]
+                ]],
+                "kwargs": {
+                    "fields": [
+                        "id",
+                        "name",
+                        "documento_numero",
+                        "actor_id",
+                        "total_valid_intervenciones"
+                    ],
+                    "limit": 10
                 }
-            """, payload)
+            },
+            "id": 2
+        }
 
-        # 🔥 retry automático (Odoo a veces tarda en activar sesión)
-        result = None
+        result2 = page.evaluate("""
+            async (payload) => {
+                const res = await fetch('/web/dataset/call_kw', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                return await res.json();
+            }
+        """, payload2)
 
-        for i in range(5):
-            result = call_api()
-
-            if result and not result.get("error"):
-                break
-
-            print(f"⏳ Retry API {i+1}/5...")
-            time.sleep(2)
-
-        print("📡 RESPUESTA API:", result)
+        print("📡 RESPUESTA PADRON:", result2)
 
         browser.close()
 
