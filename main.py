@@ -1,358 +1,565 @@
-import os
-import time
+# =========================================================
+# 🔥 SEAAP API + GOOGLE SHEETS
+# ✅ FUNCIONAL
+# ✅ FILTRA ACTORES
+# ✅ PINTA SHEETS
+# =========================================================
+
+import json
 import re
-import tempfile
-from playwright.sync_api import sync_playwright
+import requests
 import gspread
+
 from oauth2client.service_account import ServiceAccountCredentials
 
 # =========================================================
 # 🔹 CONFIG
 # =========================================================
-URL_LOGIN = "http://seaap.minsa.gob.pe/web/login"
-URL_WEB   = "http://seaap.minsa.gob.pe/web"
 
-USUARIO  = os.getenv("SEAAP_USER")
-PASSWORD = os.getenv("SEAAP_PASS")
+URL = "https://visitasdomiciliarias.minsa.gob.pe"
 
-if not USUARIO or not PASSWORD:
-    raise Exception("❌ Faltan credenciales")
+DB = "BD_SEAAP"
+
+USERNAME = "46490727"
+PASSWORD = "Irving1989*"
+
+SPREADSHEET_NAME = "DATA DE NIÑOS COMPROMISO 1 RURAL-MAYO"
 
 # =========================================================
 # 🔹 GOOGLE SHEETS
 # =========================================================
-GOOGLE_CREDS_JSON = os.getenv("GOOGLE_CREDS")
-
-with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
-    tmp.write(GOOGLE_CREDS_JSON)
-    CREDS_PATH = tmp.name
 
 scope = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds  = ServiceAccountCredentials.from_json_keyfile_name(CREDS_PATH, scope)
+creds = ServiceAccountCredentials.from_json_keyfile_name(
+    "credenciales.json",
+    scope
+)
+
 client = gspread.authorize(creds)
 
-spreadsheet = client.open("DATA COMPROMISO 1 CONSOLIDADO ABRIL ")
+spreadsheet = client.open(SPREADSHEET_NAME)
 
-# hojas
+print("🟢 Conectado a Google Sheets")
+
+# =========================================================
+# 🔹 HOJAS
+# =========================================================
+
+EXCLUIR = [
+    "telefono",
+    "Sheet1",
+    "RURAL",
+    "FIRMAS",
+    "HEMOGLOBINA",
+    "VACUNA",
+    "SEGUIMIENTO 1",
+    "SEGUIMIENTO GESTORA",
+    "CONSOLIDADO",
+    "SEGUIMIENTO 1 (2)",
+    "SEG. GIOVANA"
+]
+
 HOJAS_ACTORES = [
     h.title for h in spreadsheet.worksheets()
-    if h.title not in [
-        "telefono","Sheet1","RURAL","FIRMAS",
-        "HEMOGLOBINA","VACUNAS","SEGUIMIENTO 1",
-        "SEGUIMIENTO GESTORA","CONSOLIDADO"
-    ]
+    if h.title not in EXCLUIR
 ]
+
+print("📄 Hojas detectadas:")
+print(HOJAS_ACTORES)
+
+# =========================================================
+# 🔹 CARGAR DNIs
+# =========================================================
 
 sheets = {}
 dni_filas = {}
 
-print("📄 Detectando hojas...")
+print("📥 Cargando DNIs de niños...")
 
 for nombre in HOJAS_ACTORES:
+
     sh = spreadsheet.worksheet(nombre)
+
     sheets[nombre] = sh
 
-    dni_col = sh.col_values(3)
+    # ✅ COLUMNA D
+    dni_columna = sh.col_values(4)
 
     dni_filas[nombre] = {
-        str(dni): i + 1
-        for i, dni in enumerate(dni_col)
-        if dni
+        str(dni).strip(): i + 1
+        for i, dni in enumerate(dni_columna)
+        if str(dni).strip()
     }
 
-print("🟢 Hojas:", HOJAS_ACTORES)
+total_dnis = sum(len(x) for x in dni_filas.values())
+
+print(f"🟢 {total_dnis} DNIs cargados")
 
 # =========================================================
 # 🔹 ACTORES VALIDOS
 # =========================================================
-hoja_tel = spreadsheet.worksheet("telefono")
+
+hoja_telefono = spreadsheet.worksheet("telefono")
+
+dni_actores_raw = hoja_telefono.col_values(1)
 
 ACTORES_VALIDOS_DNI = {
     str(v).strip()
-    for v in hoja_tel.col_values(1)[1:]
+    for v in dni_actores_raw[1:]
     if str(v).strip().isdigit()
 }
 
-# =========================================================
-# 🔹 HELPERS
-# =========================================================
-def extraer_dni_actor(texto):
-    m = re.match(r"^\[(\d+)\]", str(texto).strip())
-    return m.group(1) if m else None
-
-def call_kw(page, payload):
-    return page.evaluate("""
-        async (payload) => {
-            const res = await fetch('/web/dataset/call_kw', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify(payload)
-            });
-            return await res.json();
-        }
-    """, payload)
+print(f"🟢 {len(ACTORES_VALIDOS_DNI)} actores válidos")
 
 # =========================================================
-# 🔹 LOGIN (EL QUE TE FUNCIONA)
+# 🔹 SESSION
 # =========================================================
-def esperar_login_real(page):
-    for _ in range(25):
-        if "login" not in page.url:
-            return True
-        page.wait_for_timeout(1000)
+
+session = requests.Session()
+
+session.headers.update({
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/136.0.0.0 Safari/537.36"
+    ),
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Origin": URL,
+    "Referer": f"{URL}/web"
+})
+
+# =========================================================
+# 🔹 LOGIN
+# =========================================================
+
+def login():
+
+    print("🔐 Obteniendo cookies...")
+
+    session.get(URL)
+    session.get(f"{URL}/web/login")
+
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "db": DB,
+            "login": USERNAME,
+            "password": PASSWORD
+        },
+        "id": 1
+    }
+
+    print("🔐 Iniciando sesión...")
+
+    response = session.post(
+        f"{URL}/web/session/authenticate",
+        json=payload,
+        timeout=60
+    )
+
+    print("STATUS:", response.status_code)
+
+    data = response.json()
+
+    result = data.get("result")
+
+    if result and result.get("uid"):
+
+        print("🟢 LOGIN EXITOSO")
+        print("👤 Usuario:", result.get("name"))
+
+        return True
+
+    print(data)
+
     return False
 
-def login_seaap(page):
+# =========================================================
+# 🔹 CALL ODOO
+# =========================================================
 
-    print("🌐 Abriendo login...")
+def call_odoo(model, method, args=None, kwargs=None):
 
-    page.goto(URL_LOGIN, timeout=60000)
-    page.wait_for_selector("input[name='login']", timeout=30000)
+    if args is None:
+        args = []
 
-    print("🔐 Enviando credenciales...")
+    if kwargs is None:
+        kwargs = {}
 
-    page.fill("input[name='login']", USUARIO)
-    page.fill("input[name='password']", PASSWORD)
-    page.click("button[type='submit']")
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "call",
+        "params": {
+            "model": model,
+            "method": method,
+            "args": args,
+            "kwargs": kwargs
+        },
+        "id": 1
+    }
 
-    page.wait_for_load_state("domcontentloaded")
+    response = session.post(
+        f"{URL}/web/dataset/call_kw",
+        json=payload,
+        timeout=120
+    )
 
-    ok = esperar_login_real(page)
+    data = response.json()
 
-    print("🌐 URL actual:", page.url)
+    if "error" in data:
 
-    if not ok or "login" in page.url:
-        raise Exception("❌ Login falló")
+        print("❌ ERROR ODOO")
+        print(json.dumps(data["error"], indent=2))
 
-    print("🟢 Login REAL exitoso")
+        return {}
 
-    page.goto(URL_WEB, timeout=60000)
-    page.wait_for_load_state("domcontentloaded")
+    return data.get("result", {})
 
-    if "login" in page.url:
-        raise Exception("❌ Sesión inválida")
+# =========================================================
+# 🔹 EXTRAER DNI ACTOR
+# =========================================================
 
-    print("🟢 Sesión Odoo activa")
+def extraer_dni_actor(texto):
+
+    match = re.match(r"^\[(\d+)\]", str(texto))
+
+    return match.group(1) if match else None
+
+# =========================================================
+# 🔹 ACTORES
+# =========================================================
+
+def obtener_actores():
+
+    kwargs = {
+        "domain": [
+            "&",
+            "&",
+            ["estado_carga", "not in", ["borrador", "cargado"]],
+            ["parent_id", "=", 7],
+            ["rango_edad", "=", "01"]
+        ],
+        "fields": ["actor_id"],
+        "groupby": ["actor_id"],
+        "lazy": True
+    }
+
+    result = call_odoo(
+        "actividades.padron.nominal",
+        "web_read_group",
+        kwargs=kwargs
+    )
+
+    return result.get("groups", [])
+
+# =========================================================
+# 🔹 NIÑOS
+# =========================================================
+
+def obtener_ninos(actor_id):
+
+    kwargs = {
+        "domain": [
+            "&",
+            "&",
+            "&",
+            ["estado_carga", "not in", ["borrador", "cargado"]],
+            ["parent_id", "=", 7],
+            ["rango_edad", "=", "01"],
+            ["actor_id", "=", actor_id]
+        ],
+
+        "specification": {
+            "documento_numero": {},
+            "name": {},
+            "registro_ids": {}
+        },
+
+        "offset": 0,
+        "limit": 200,
+        "order": ""
+    }
+
+    result = call_odoo(
+        "actividades.padron.nominal",
+        "web_search_read",
+        kwargs=kwargs
+    )
+
+    return result.get("records", [])
+
+# =========================================================
+# 🔹 REGISTROS
+# =========================================================
+
+def obtener_registros(ids):
+
+    if not ids:
+        return []
+
+    result = call_odoo(
+        "actividades.registro",
+        "read",
+        args=[ids],
+        kwargs={
+            "fields": [
+                "id",
+                "ficha",
+                "fecha_visita"
+            ]
+        }
+    )
+
+    return result
 
 # =========================================================
 # 🔹 SHEETS
 # =========================================================
+
 visitas_para_sheet = []
 formatos_para_sheet = []
 
 def registrar_visitas_sheet(dni, registros):
 
+    hoja = None
     fila = None
-    hoja_destino = None
 
-    for nombre, dic in dni_filas.items():
-        if str(dni) in dic:
-            fila = dic[str(dni)]
-            hoja_destino = nombre
+    for nombre_hoja, dic in dni_filas.items():
+
+        if str(dni).strip() in dic:
+
+            hoja = nombre_hoja
+            fila = dic[str(dni).strip()]
+
             break
 
-    if not fila:
+    if not hoja:
         return
 
     registros_validos = [
-        r for r in registros if r.get("ficha") in [1,2,4,5]
+        r for r in registros
+        if str(r.get("ficha")) in ["1", "2", "4", "5"]
     ]
 
-    if not registros_validos:
-        return
-
-    registros_ordenados = sorted(
-        registros_validos,
-        key=lambda x: x.get("fecha_visita_1") or ""
+    registros_validos.sort(
+        key=lambda x: x.get("fecha_visita") or ""
     )
 
-    columnas = ["Z","AC","AF"]
+    columnas = ["Z", "AC", "AF"]
 
     colores = {
-        1: {"red":0.4,"green":0.85,"blue":0.4},   # verde más intenso
-        2: {"red":0.4,"green":0.85,"blue":0.4},   # mismo verde
-        4: {"red":0.9,"green":0.3,"blue":0.3},    # rojo más fuerte
-        5: {"red":0.6,"green":0.3,"blue":0.9}     # morado más intenso
+
+        # ✅ VERDE FUERTE
+        "1": {
+            "red": 0.45,
+            "green": 0.85,
+            "blue": 0.45
+        },
+
+        "2": {
+            "red": 0.45,
+            "green": 0.85,
+            "blue": 0.45
+        },
+
+        # ✅ ROJO FUERTE
+        "4": {
+            "red": 0.95,
+            "green": 0.35,
+            "blue": 0.35
+        },
+
+        # ✅ MORADO FUERTE
+        "5": {
+            "red": 0.65,
+            "green": 0.45,
+            "blue": 0.90
+        }
     }
 
-    for i, reg in enumerate(registros_ordenados[:3]):
+    for i, reg in enumerate(registros_validos[:3]):
 
-        fecha = reg.get("fecha_visita_1")
+        fecha = reg.get("fecha_visita")
+
         if not fecha:
             continue
 
-        ficha = int(reg.get("ficha", 0))
+        ficha = str(reg.get("ficha"))
+
         col = columnas[i]
 
+        # =====================================================
+        # 🔹 VALOR
+        # =====================================================
+
         visitas_para_sheet.append({
-            "range": f"{hoja_destino}!{col}{fila}",
+            "range": f"{hoja}!{col}{fila}",
             "values": [[fecha]]
         })
 
+        # =====================================================
+        # 🔹 COLOR
+        # =====================================================
+
         if ficha in colores:
+
             formatos_para_sheet.append({
-                "hoja": hoja_destino,
+
+                "hoja": hoja,
+
                 "celda": f"{col}{fila}",
+
                 "color": colores[ficha]
             })
+# =========================================================
+# 🔹 ENVIAR
+# =========================================================
 
-def enviar_visitas_a_sheet():
+def enviar_visitas():
 
     if not visitas_para_sheet:
-        print("📭 Sin datos para enviar")
+
+        print("📭 No hay datos")
         return
 
     print(f"📤 Enviando {len(visitas_para_sheet)} registros...")
 
+    # =====================================================
+    # 🔹 ESCRIBIR FECHAS
+    # =====================================================
+
     spreadsheet.values_batch_update({
+
         "valueInputOption": "USER_ENTERED",
+
         "data": visitas_para_sheet
     })
 
+    print("🟢 Fechas enviadas")
+
+    # =====================================================
+    # 🔹 PINTAR CELDAS
+    # =====================================================
+
     if formatos_para_sheet:
 
-        requests = []
+        requests_batch = []
 
         for f in formatos_para_sheet:
-            row, col = gspread.utils.a1_to_rowcol(f["celda"])
+
+            row, col = gspread.utils.a1_to_rowcol(
+                f["celda"]
+            )
+
             sheet_id = sheets[f["hoja"]].id
 
-            requests.append({
+            requests_batch.append({
+
                 "repeatCell": {
+
                     "range": {
+
                         "sheetId": sheet_id,
-                        "startRowIndex": row-1,
+
+                        "startRowIndex": row - 1,
                         "endRowIndex": row,
-                        "startColumnIndex": col-1,
+
+                        "startColumnIndex": col - 1,
                         "endColumnIndex": col
                     },
+
                     "cell": {
+
                         "userEnteredFormat": {
+
                             "backgroundColor": f["color"]
                         }
                     },
+
                     "fields": "userEnteredFormat.backgroundColor"
                 }
             })
 
-        spreadsheet.batch_update({"requests": requests})
+        spreadsheet.batch_update({
+            "requests": requests_batch
+        })
 
-    print("✅ Sheets actualizado")
+        print("🎨 Colores aplicados")
 
-# =========================================================
-# 🔥 PROCESO OPTIMIZADO
-# =========================================================
-def procesar(page):
-
-    print("📊 Cargando niños...")
-
-    ninos = call_kw(page, {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "actividades.padron.nominal",
-            "method": "search_read",
-            "args": [[["parent_id","=",103]]],
-            "kwargs": {
-                "fields": ["id","name","documento_numero","actor_id","registro_ids"],
-                "limit": 3000
-            }
-        },
-        "id": 1
-    }).get("result", [])
-
-    print("👶 TOTAL:", len(ninos))
-
-    filtrados = []
-
-    for n in ninos:
-        actor = n.get("actor_id")
-        if not actor:
-            continue
-
-        dni_actor = extraer_dni_actor(actor[1])
-
-        if dni_actor in ACTORES_VALIDOS_DNI:
-            filtrados.append(n)
-
-    print("🟢 FILTRADOS:", len(filtrados))
-
-    all_ids = []
-    mapa = {}
-
-    for n in filtrados:
-        ids = n.get("registro_ids", [])
-        if ids:
-            mapa[n["id"]] = ids
-            all_ids.extend(ids)
-
-    registros = call_kw(page, {
-        "jsonrpc": "2.0",
-        "method": "call",
-        "params": {
-            "model": "actividades.registro",
-            "method": "read",
-            "args": [all_ids],
-            "kwargs": {
-                "fields": ["id","ficha","fecha_visita_1"]
-            }
-        },
-        "id": 2
-    }).get("result", [])
-
-    reg_dict = {r["id"]: r for r in registros}
-
-    for n in filtrados:
-
-        dni = n.get("documento_numero")
-        regs = [
-            reg_dict[rid]
-            for rid in mapa.get(n["id"], [])
-            if rid in reg_dict
-        ]
-
-        if regs:
-            registrar_visitas_sheet(dni, regs)
-
-    enviar_visitas_a_sheet()
+    print("✅ SHEET ACTUALIZADO")
 
 # =========================================================
-# 🔹 MAIN
+# 🔹 EJECUTAR
 # =========================================================
+
 def ejecutar():
 
-    with sync_playwright() as p:
+    if not login():
+        return
 
-        browser = p.chromium.launch(
-            headless=True,
-            args=["--no-sandbox","--disable-dev-shm-usage"]
-        )
+    actores = obtener_actores()
 
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-            locale="es-PE"
-        )
+    print(f"👥 Actores encontrados: {len(actores)}")
 
-        page = context.new_page()
+    for actor in actores:
 
-        page.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
-        """)
+        actor_data = actor.get("actor_id")
 
-        login_seaap(page)
+        if not actor_data:
+            continue
 
-        procesar(page)
+        actor_id = actor_data[0]
+        actor_nombre = actor_data[1]
 
-        browser.close()
+        dni_actor = extraer_dni_actor(actor_nombre)
+
+        if dni_actor not in ACTORES_VALIDOS_DNI:
+            continue
+
+        print("\n===================================")
+        print(f"👤 ACTOR: {actor_nombre}")
+        print(f"🆔 DNI: {dni_actor}")
+
+        ninos = obtener_ninos(actor_id)
+
+        print(f"👶 Niños encontrados: {len(ninos)}")
+
+        for nino in ninos:
+
+            dni = nino.get("documento_numero")
+            nombre = nino.get("name")
+
+            registro_ids = nino.get("registro_ids", [])
+
+            if not registro_ids:
+                continue
+
+            registros = obtener_registros(registro_ids)
+
+            if not registros:
+                continue
+
+            print(
+                f"🧒 {nombre} | DNI {dni} | visitas: {len(registros)}"
+            )
+
+            registrar_visitas_sheet(
+                dni,
+                registros
+            )
+
+    enviar_visitas()
 
 # =========================================================
+# 🔹 START
+# =========================================================
+
 if __name__ == "__main__":
+
     ejecutar()
