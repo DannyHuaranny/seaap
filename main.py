@@ -3,13 +3,12 @@
 # ✅ GITHUB ACTIONS READY
 # ✅ USA GITHUB SECRETS
 # ✅ PINTA CELDAS
-# ✅ AUTOMATIZABLE
+# ✅ FUNCIONAL
 # =========================================================
 
 import os
 import json
 import re
-import time
 import tempfile
 import requests
 import gspread
@@ -22,30 +21,27 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 URL = "https://visitasdomiciliarias.minsa.gob.pe"
 
-# ✅ GITHUB SECRETS
+DB = "BD_SEAAP"
+
 USERNAME = os.getenv("SEAAP_USER")
 PASSWORD = os.getenv("SEAAP_PASS")
-GOOGLE_CREDS = os.getenv("GOOGLE_CREDS")
 
-# ✅ CAMBIA SOLO ESTO SI QUIERES OTRA SHEET
 SPREADSHEET_NAME = "DATA DE NIÑOS COMPROMISO 1 RURAL-MAYO"
 
-# =========================================================
-# 🔹 VALIDAR SECRETS
-# =========================================================
-
 if not USERNAME:
-    raise Exception("❌ FALTA SECRET SEAAP_USER")
+    raise Exception("❌ Falta secret SEAAP_USER")
 
 if not PASSWORD:
-    raise Exception("❌ FALTA SECRET SEAAP_PASS")
+    raise Exception("❌ Falta secret SEAAP_PASS")
+
+# =========================================================
+# 🔹 GOOGLE CREDS
+# =========================================================
+
+GOOGLE_CREDS = os.getenv("GOOGLE_CREDS")
 
 if not GOOGLE_CREDS:
-    raise Exception("❌ FALTA SECRET GOOGLE_CREDS")
-
-# =========================================================
-# 🔹 CREAR JSON TEMPORAL
-# =========================================================
+    raise Exception("❌ Falta secret GOOGLE_CREDS")
 
 with tempfile.NamedTemporaryFile(
     mode="w",
@@ -122,11 +118,8 @@ for nombre in HOJAS_ACTORES:
     dni_columna = sh.col_values(4)
 
     dni_filas[nombre] = {
-
         str(dni).strip(): i + 1
-
         for i, dni in enumerate(dni_columna)
-
         if str(dni).strip()
     }
 
@@ -143,11 +136,8 @@ hoja_telefono = spreadsheet.worksheet("telefono")
 dni_actores_raw = hoja_telefono.col_values(1)
 
 ACTORES_VALIDOS_DNI = {
-
     str(v).strip()
-
     for v in dni_actores_raw[1:]
-
     if str(v).strip().isdigit()
 }
 
@@ -160,19 +150,14 @@ print(f"🟢 {len(ACTORES_VALIDOS_DNI)} actores válidos")
 session = requests.Session()
 
 session.headers.update({
-
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/136.0.0.0 Safari/537.36"
     ),
-
     "Content-Type": "application/json",
-
     "Accept": "application/json",
-
     "Origin": URL,
-
     "Referer": f"{URL}/web"
 })
 
@@ -188,29 +173,21 @@ def login():
     session.get(f"{URL}/web/login")
 
     payload = {
-
         "jsonrpc": "2.0",
-
         "method": "call",
-
         "params": {
-
+            "db": DB,
             "login": USERNAME,
-
             "password": PASSWORD
         },
-
         "id": 1
     }
 
     print("🔐 Iniciando sesión...")
 
     response = session.post(
-
         f"{URL}/web/session/authenticate",
-
         json=payload,
-
         timeout=60
     )
 
@@ -227,7 +204,7 @@ def login():
 
         return True
 
-    print(data)
+    print(json.dumps(data, indent=2))
 
     return False
 
@@ -244,31 +221,20 @@ def call_odoo(model, method, args=None, kwargs=None):
         kwargs = {}
 
     payload = {
-
         "jsonrpc": "2.0",
-
         "method": "call",
-
         "params": {
-
             "model": model,
-
             "method": method,
-
             "args": args,
-
             "kwargs": kwargs
         },
-
         "id": 1
     }
 
     response = session.post(
-
         f"{URL}/web/dataset/call_kw",
-
         json=payload,
-
         timeout=120
     )
 
@@ -289,7 +255,10 @@ def call_odoo(model, method, args=None, kwargs=None):
 
 def extraer_dni_actor(texto):
 
-    match = re.match(r"^\[(\d+)\]", str(texto))
+    match = re.match(
+        r"^\[(\d+)\]",
+        str(texto)
+    )
 
     return match.group(1) if match else None
 
@@ -300,16 +269,11 @@ def extraer_dni_actor(texto):
 def obtener_actores():
 
     kwargs = {
-
         "domain": [
-
             "&",
             "&",
-
             ["estado_carga", "not in", ["borrador", "cargado"]],
-
             ["parent_id", "=", 7],
-
             ["rango_edad", "=", "01"]
         ],
 
@@ -321,11 +285,8 @@ def obtener_actores():
     }
 
     result = call_odoo(
-
         "actividades.padron.nominal",
-
         "web_read_group",
-
         kwargs=kwargs
     )
 
@@ -340,42 +301,29 @@ def obtener_ninos(actor_id):
     kwargs = {
 
         "domain": [
-
             "&",
             "&",
             "&",
-
             ["estado_carga", "not in", ["borrador", "cargado"]],
-
             ["parent_id", "=", 7],
-
             ["rango_edad", "=", "01"],
-
             ["actor_id", "=", actor_id]
         ],
 
         "specification": {
-
             "documento_numero": {},
-
             "name": {},
-
             "registro_ids": {}
         },
 
         "offset": 0,
-
         "limit": 200,
-
         "order": ""
     }
 
     result = call_odoo(
-
         "actividades.padron.nominal",
-
         "web_search_read",
-
         kwargs=kwargs
     )
 
@@ -391,21 +339,13 @@ def obtener_registros(ids):
         return []
 
     result = call_odoo(
-
         "actividades.registro",
-
         "read",
-
         args=[ids],
-
         kwargs={
-
             "fields": [
-
                 "id",
-
                 "ficha",
-
                 "fecha_visita"
             ]
         }
@@ -438,9 +378,7 @@ def registrar_visitas_sheet(dni, registros):
         return
 
     registros_validos = [
-
         r for r in registros
-
         if str(r.get("ficha")) in ["1", "2", "4", "5"]
     ]
 
@@ -492,18 +430,16 @@ def registrar_visitas_sheet(dni, registros):
         col = columnas[i]
 
         # =====================================================
-        # 🔹 ESCRIBIR FECHA
+        # 🔹 FECHA
         # =====================================================
 
         visitas_para_sheet.append({
-
             "range": f"{hoja}!{col}{fila}",
-
             "values": [[fecha]]
         })
 
         # =====================================================
-        # 🔹 PINTAR COLOR
+        # 🔹 COLOR
         # =====================================================
 
         if ficha in colores:
@@ -531,7 +467,7 @@ def enviar_visitas():
     print(f"📤 Enviando {len(visitas_para_sheet)} registros...")
 
     # =====================================================
-    # 🔹 FECHAS
+    # 🔹 ESCRIBIR FECHAS
     # =====================================================
 
     spreadsheet.values_batch_update({
@@ -543,10 +479,8 @@ def enviar_visitas():
 
     print("🟢 Fechas enviadas")
 
-    time.sleep(2)
-
     # =====================================================
-    # 🔹 COLORES
+    # 🔹 PINTAR CELDAS
     # =====================================================
 
     if formatos_para_sheet:
