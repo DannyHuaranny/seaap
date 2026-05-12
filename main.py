@@ -270,8 +270,7 @@ def obtener_actores():
 
     kwargs = {
         "domain": [
-            "&",
-            "&",
+            
             ["estado_carga", "not in", ["borrador", "cargado"]],
             ["parent_id", "=", 7]
         ],
@@ -300,9 +299,7 @@ def obtener_ninos(actor_id):
     kwargs = {
 
         "domain": [
-            "&",
-            "&",
-            "&",
+          
             ["estado_carga", "not in", ["borrador", "cargado"]],
             ["parent_id", "=", 7],
             ["actor_id", "=", actor_id]
