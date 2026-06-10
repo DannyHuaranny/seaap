@@ -273,7 +273,7 @@ def obtener_actores():
         "domain": [
             
             ["estado_carga", "not in", ["borrador", "cargado"]],
-            ["parent_id", "=", 7]
+            ["parent_id", "=", 11]
         ],
 
         "fields": ["actor_id"],
@@ -302,7 +302,7 @@ def obtener_ninos(actor_id):
         "domain": [
           
             ["estado_carga", "not in", ["borrador", "cargado"]],
-            ["parent_id", "=", 7],
+            ["parent_id", "=", 11],
             ["actor_id", "=", actor_id]
         ],
 
