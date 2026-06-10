@@ -26,7 +26,7 @@ DB = "BD_SEAAP"
 USERNAME = os.getenv("SEAAP_USER")
 PASSWORD = os.getenv("SEAAP_PASS")
 
-SPREADSHEET_NAME = "DATA DE NIÑOS COMPROMISO 1 RURAL-MAYO"
+SPREADSHEET_NAME = "DATA_COMPROMISO_1_JUNIO_2026"
 
 if not USERNAME:
     raise Exception("❌ Falta secret SEAAP_USER")
@@ -81,14 +81,15 @@ EXCLUIR = [
     "telefono",
     "Sheet1",
     "RURAL",
-    "FIRMAS",
+    "FIRMA",
     "HEMOGLOBINA",
     "VACUNA",
     "SEGUIMIENTO 1",
     "SEGUIMIENTO GESTORA",
     "CONSOLIDADO",
-    "SEGUIMIENTO 1 (2)",
-    "SEG. GIOVANA"
+    "SEGUIMIENTO",
+    "SEG. GIOVANA (2)",
+    "PROG.JUNTOS PERIURBANA"
 ]
 
 HOJAS_ACTORES = [
@@ -381,7 +382,7 @@ def registrar_visitas_sheet(dni, registros):
         key=lambda x: x.get("fecha_visita") or ""
     )
 
-    columnas = ["Z", "AC", "AF"]
+    columnas = ["Y", "AB", "AE"]
 
     colores = {
 
