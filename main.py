@@ -26,7 +26,7 @@ DB = "BD_SEAAP"
 USERNAME = os.getenv("SEAAP_USER")
 PASSWORD = os.getenv("SEAAP_PASS")
 
-SPREADSHEET_NAME = "DATA_COMPROMISO_1_JUNIO_2026"
+SPREADSHEET_NAME = "DATA JULIO%NIÑOS JULIO"
 
 if not USERNAME:
     raise Exception("❌ Falta secret SEAAP_USER")
@@ -117,7 +117,7 @@ for nombre in HOJAS_ACTORES:
     sheets[nombre] = sh
 
     # ✅ COLUMNA C
-    dni_columna = sh.col_values(3)
+    dni_columna = sh.col_values(4)
 
     dni_filas[nombre] = {
         str(dni).strip(): i + 1
@@ -274,7 +274,7 @@ def obtener_actores():
         "domain": [
             
             ["estado_carga", "not in", ["borrador", "cargado"]],
-            ["parent_id", "=", 11]
+            ["parent_id", "=", 12]
         ],
 
         "fields": ["actor_id"],
@@ -303,7 +303,7 @@ def obtener_ninos(actor_id):
         "domain": [
           
             ["estado_carga", "not in", ["borrador", "cargado"]],
-            ["parent_id", "=", 11],
+            ["parent_id", "=", 12],
             ["actor_id", "=", actor_id]
         ],
 
@@ -383,7 +383,7 @@ def registrar_visitas_sheet(dni, registros):
         key=lambda x: x.get("fecha_visita") or ""
     )
 
-    columnas = ["Y", "AB", "AE"]
+    columnas = ["Z", "AC", "AF"]
 
     colores = {
 
