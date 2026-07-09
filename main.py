@@ -78,19 +78,13 @@ print("🟢 Conectado a Google Sheets")
 # =========================================================
 
 EXCLUIR = [
-    "telefono",
-    "Sheet1",
     "Hoja1",
     "RURAL",
-    "FIRMA",
+    "FIRMAS",
     "HEMOGLOBINA",
-    "VACUNA",
-    "SEGUIMIENTO 1",
-    "SEGUIMIENTO GESTORA",
-    "CONSOLIDADO",
-    "SEGUIMIENTO ",
-    "SEG. GIOVANA (2)",
-    "PROG.JUNTOS PERIURBANA"
+    "VACUNAS",
+    "SEGUIMIENTO",
+    "SEGUIMIENTO GIOVANA"
 ]
 
 HOJAS_ACTORES = [
