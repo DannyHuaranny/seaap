@@ -111,8 +111,8 @@ for nombre in HOJAS_ACTORES:
 
     sheets[nombre] = sh
 
-    # ✅ COLUMNA C
-    dni_columna = sh.col_values(3)
+    # ✅ COLUMNA D
+    dni_columna = sh.col_values(4)
 
     dni_filas[nombre] = {
         str(dni).strip(): i + 1
