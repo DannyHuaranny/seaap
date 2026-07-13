@@ -80,7 +80,7 @@ print("🟢 Conectado a Google Sheets")
 EXCLUIR = [
     "Hoja1",
     "telefono",
-    
+    "RURAL",
     "FIRMAS",
     "HEMOGLOBINA",
     "VACUNAS",
