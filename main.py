@@ -26,7 +26,7 @@ DB = "BD_SEAAP"
 USERNAME = os.getenv("SEAAP_USER")
 PASSWORD = os.getenv("SEAAP_PASS")
 
-SPREADSHEET_NAME = "DATA JULIO%NIÑOS JULIO"
+SPREADSHEET_NAME = "CONSOLIDADO NIÑOS COMPROMISO_1_AGOSTO_2025 (1)"
 
 if not USERNAME:
     raise Exception("❌ Falta secret SEAAP_USER")
@@ -269,7 +269,7 @@ def obtener_actores():
         "domain": [
             
             ["estado_carga", "not in", ["borrador", "cargado"]],
-            ["parent_id", "=", 14]
+            ["parent_id", "=", 15]
         ],
 
         "fields": ["actor_id"],
@@ -298,7 +298,7 @@ def obtener_ninos(actor_id):
         "domain": [
           
             ["estado_carga", "not in", ["borrador", "cargado"]],
-            ["parent_id", "=", 14],
+            ["parent_id", "=", 15],
             ["actor_id", "=", actor_id]
         ],
 
